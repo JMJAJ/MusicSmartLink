@@ -413,7 +413,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                       )}
                       <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
                     </div>
-                    <ExternalLink className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" />
+                    {/* Not sure I want to keep it or not */}
+                    {/* <ExternalLink className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" /> */}
                   </div>
                 </a>
               ))}
