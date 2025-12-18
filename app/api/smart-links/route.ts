@@ -8,6 +8,29 @@ export async function POST(request: Request) {
 
     const supabase = await createClient()
 
+    // Server-side validation helpers
+    const isValidUrl = (string: string) => {
+      try {
+        const url = new URL(string)
+        return url.protocol === "http:" || url.protocol === "https:"
+      } catch (_) {
+        return false
+      }
+    }
+
+    // Validate inputs
+    if (artwork_url && !isValidUrl(artwork_url)) {
+      return NextResponse.json({ error: "Invalid artwork URL provided" }, { status: 400 })
+    }
+
+    if (platforms && Array.isArray(platforms)) {
+      for (const p of platforms) {
+        if (!p.url || !isValidUrl(p.url)) {
+          return NextResponse.json({ error: "Invalid platform URL provided" }, { status: 400 })
+        }
+      }
+    }
+
     // Check if link already exists
     const { data: existingLink } = await supabase
       .from("smart_links")

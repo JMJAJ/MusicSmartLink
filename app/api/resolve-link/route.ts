@@ -52,6 +52,15 @@ export async function GET(request: NextRequest) {
     }
 
     try {
+        const parsedUrl = new URL(url)
+        if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+            return NextResponse.json({ error: "Invalid URL protocol. Only http and https are supported." }, { status: 400 })
+        }
+    } catch (e) {
+        return NextResponse.json({ error: "Invalid URL format" }, { status: 400 })
+    }
+
+    try {
         const response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`)
 
         if (!response.ok) {
