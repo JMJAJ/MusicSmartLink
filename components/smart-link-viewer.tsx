@@ -202,7 +202,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
       <div className="relative z-10 w-full max-w-sm space-y-4">
         <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation" style={{ animationDelay: "0.2s" }}>
           {smartLink.artwork_url ? (
-            <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden mb-6 shadow-2xl shadow-black/30 ring-1 ring-white/10 group">
+            <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10 group">
               <Image
                 src={smartLink.artwork_url || "/placeholder.svg"}
                 alt={smartLink.title}
