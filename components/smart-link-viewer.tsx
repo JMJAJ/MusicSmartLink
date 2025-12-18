@@ -26,15 +26,15 @@ interface SmartLinkViewerProps {
   platformLinks: PlatformLink[]
 }
 
-const platformIcons: Record<string, string> = {
-  spotify: "🎵",
-  "apple-music": "🎧",
-  "youtube-music": "▶️",
-  soundcloud: "☁️",
-  tidal: "🌊",
-  deezer: "🎶",
-  "amazon-music": "📀",
-  bandcamp: "🎸",
+const platformLogos: Record<string, string> = {
+  spotify: "/spotify.svg",
+  "apple-music": "/apple_music.svg",
+  "youtube-music": "/youtube_music.svg",
+  soundcloud: "/soundcloud.svg",
+  tidal: "/tidal.svg",
+  deezer: "/deezer.svg",
+  "amazon-music": "/amazon_music.svg",
+  bandcamp: "/bandcamp.svg",
 }
 
 const platformColors: Record<string, string> = {
@@ -401,8 +401,19 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                     className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-red-600"}`}
                     data-platform={link.platform}
                   >
-                    <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
-                    <ExternalLink className="w-3.5 h-3.5 opacity-50 group-hover:opacity-100 transition-opacity" />
+                    <div className="flex items-center gap-3">
+                      {platformLogos[link.platform] && (
+                        <Image
+                          src={platformLogos[link.platform] || "/placeholder.svg"}
+                          alt={link.platform}
+                          width={24}
+                          height={24}
+                          className="w-5 h-5 brightness-0 invert"
+                        />
+                      )}
+                      <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
+                    </div>
+                    <ExternalLink className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" />
                   </div>
                 </a>
               ))}
