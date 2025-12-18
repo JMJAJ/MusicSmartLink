@@ -11,23 +11,13 @@ export const metadata: Metadata = {
   title: "Music Smart Link - Share Your Music Everywhere",
   description:
     "Create beautiful smart links for your music. Share your tracks on Spotify, Apple Music, YouTube, and more with one stunning link.",
-  generator: "v0.app",
   icons: {
     icon: [
-      {
-        url: "/icon-light-32x32.png",
-        media: "(prefers-color-scheme: light)",
-      },
-      {
-        url: "/icon-dark-32x32.png",
-        media: "(prefers-color-scheme: dark)",
-      },
       {
         url: "/icon.svg",
         type: "image/svg+xml",
       },
     ],
-    apple: "/apple-icon.png",
   },
 }
 
