@@ -1,21 +1,42 @@
 "use client"
 
-import { ExternalLink, Copy, Check, ArrowLeft, Play, Pause, Volume2, VolumeX, Volume1 } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import {
+  ExternalLink,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Volume1,
+  Music2,
+  Disc,
+  Clock,
+  Loader2
+} from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { useState, useRef, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
 
-interface SmartLink {
+// --- Interfaces ---
+
+export interface Track {
+  id: string
+  title: string
+  artist?: string
+  duration?: string
+  preview_url?: string | null
+}
+
+export interface SmartLink {
   id: string
   slug: string
   title: string
   artist: string | null
   artwork_url: string | null
+  tracks?: Track[] 
 }
 
-interface PlatformLink {
+export interface PlatformLink {
   id: string
   platform: string
   url: string
@@ -49,31 +70,61 @@ const platformColors: Record<string, string> = {
 }
 
 export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkViewerProps) {
-  const [copied, setCopied] = useState(false)
+  // --- Data State ---
+  const [tracks, setTracks] = useState<Track[]>(smartLink.tracks || [])
+  const [isLoadingTracks, setIsLoadingTracks] = useState(false)
+  
+  // FIX: Only trigger Album View if there is MORE than 1 track.
+  // This prevents Single Releases from looking like empty albums.
+  const hasTracks = tracks.length > 1
+
+  // --- Fetch Tracks Logic ---
+  useEffect(() => {
+    // Only fetch if we don't have tracks and we have title/artist
+    if (tracks.length === 0 && smartLink.title && smartLink.artist) {
+      const fetchTracks = async () => {
+        setIsLoadingTracks(true)
+        try {
+          const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}`)
+          const data = await res.json()
+          
+          if (data.tracks && Array.isArray(data.tracks)) {
+            setTracks(data.tracks)
+          }
+        } catch (error) {
+          console.error("Failed to load album tracks", error)
+        } finally {
+          setIsLoadingTracks(false)
+        }
+      }
+      fetchTracks()
+    }
+  }, [smartLink.title, smartLink.artist, tracks.length])
+
+  // --- Audio State ---
   const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
   const [volume, setVolume] = useState(0.25)
   const [isMuted, setIsMuted] = useState(false)
+  
   const [isDraggingTime, setIsDraggingTime] = useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
+
   const audioRef = useRef<HTMLAudioElement>(null)
   const progressBarRef = useRef<HTMLDivElement>(null)
   const volumeBarRef = useRef<HTMLDivElement>(null)
 
-  const spotifyLink = platformLinks.find((link) => link.platform === "spotify")
-  const spotifyTrackId = spotifyLink ? spotifyLink.url.match(/track\/([a-zA-Z0-9]+)/)?.[1] : null
+  // Audio Source: Fallback to global preview, or use specific track preview
+  const globalPreview = platformLinks.find((link) => link.platform === "preview")?.url
+  
+  // If we have tracks, use the specific one. If not, use global.
+  const currentAudioSrc = hasTracks 
+    ? (tracks[currentTrackIndex]?.preview_url || globalPreview)
+    : globalPreview
 
-  const previewLink = platformLinks.find((link) => link.platform === "preview")
-  // Use the preview link provided by iTunes/Deezer
-  const audioSrc = previewLink ? previewLink.url : null
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(window.location.href)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
+  // --- Handlers ---
   const togglePlay = async () => {
     if (audioRef.current) {
       if (isPlaying) {
@@ -84,7 +135,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           await audioRef.current.play()
           setIsPlaying(true)
         } catch (err) {
-          console.error("Audio playback failed:", err)
+          console.error("Playback failed", err)
           setAudioError(true)
           setIsPlaying(false)
         }
@@ -92,48 +143,56 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }
 
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : volume
+  const playSpecificTrack = (index: number) => {
+    if (index === currentTrackIndex) {
+      togglePlay()
+    } else {
+      setCurrentTrackIndex(index)
+      setIsPlaying(true)
+      setProgress(0)
+      setAudioError(false)
     }
+  }
+
+  // Reload audio on track switch
+  useEffect(() => {
+    if (audioRef.current && isPlaying) {
+      audioRef.current.src = currentAudioSrc || ""
+      audioRef.current.load()
+      audioRef.current.play().catch(() => setIsPlaying(false))
+    }
+  }, [currentTrackIndex, currentAudioSrc]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = isMuted ? 0 : volume
   }, [volume, isMuted])
 
-  // Global mouse handlers for dragging
+  // Dragging
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingTime && progressBarRef.current && audioRef.current) {
         const rect = progressBarRef.current.getBoundingClientRect()
         const x = e.clientX - rect.left
-        const percentage = Math.min(Math.max(x / rect.width, 0), 1)
-        const duration = audioRef.current.duration || 1
-
-        const newTime = percentage * duration
-        if (Number.isFinite(newTime)) {
-          audioRef.current.currentTime = newTime
-          setProgress(percentage * 100)
-        }
+        const p = Math.min(Math.max(x / rect.width, 0), 1)
+        audioRef.current.currentTime = p * (audioRef.current.duration || 1)
+        setProgress(p * 100)
       }
-
       if (isDraggingVolume && volumeBarRef.current) {
         const rect = volumeBarRef.current.getBoundingClientRect()
         const y = rect.bottom - e.clientY
-        const percentage = Math.min(Math.max(y / rect.height, 0), 1)
-
-        setVolume(percentage)
-        setIsMuted(percentage === 0)
+        const p = Math.min(Math.max(y / rect.height, 0), 1)
+        setVolume(p)
+        setIsMuted(p === 0)
       }
     }
-
     const handleMouseUp = () => {
       setIsDraggingTime(false)
       setIsDraggingVolume(false)
     }
-
     if (isDraggingTime || isDraggingVolume) {
       document.addEventListener("mousemove", handleMouseMove)
       document.addEventListener("mouseup", handleMouseUp)
     }
-
     return () => {
       document.removeEventListener("mousemove", handleMouseMove)
       document.removeEventListener("mouseup", handleMouseUp)
@@ -141,7 +200,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   }, [isDraggingTime, isDraggingVolume])
 
   const handleTimeUpdate = () => {
-    // Don't update progress while dragging to prevent jitter
     if (audioRef.current && !isDraggingTime) {
       const current = audioRef.current.currentTime
       const duration = audioRef.current.duration || 1
@@ -149,285 +207,166 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }
 
-  const handleTimeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    setIsDraggingTime(true)
-    // Instant update on click
-    if (audioRef.current && progressBarRef.current) {
-      const rect = progressBarRef.current.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      const percentage = Math.min(Math.max(x / rect.width, 0), 1)
-      const duration = audioRef.current.duration || 1
-      const newTime = percentage * duration
-
-      if (Number.isFinite(newTime)) {
-        audioRef.current.currentTime = newTime
-        setProgress(percentage * 100)
-      }
-    }
-  }
-
-  const handleVolumeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    setIsDraggingVolume(true)
-    // Instant update on click
-    if (volumeBarRef.current) {
-      const rect = volumeBarRef.current.getBoundingClientRect()
-      const y = rect.bottom - e.clientY
-      const percentage = Math.min(Math.max(y / rect.height, 0), 1)
-
-      setVolume(percentage)
-      setIsMuted(percentage === 0)
-    }
-  }
-
-  const toggleMute = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    setIsMuted(!isMuted)
-  }
-
-  const formatPlatformName = (platform: string) => {
-    return platform
-      .split("-")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
-  }
+  const formatPlatformName = (p: string) => p.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
+      {/* Background Ambience */}
       <div className="absolute top-1/4 left-1/3 w-[400px] h-[400px] bg-red-600/10 rounded-full blur-3xl opacity-20 float-animation" />
-      <div
-        className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] bg-red-700/10 rounded-full blur-3xl opacity-20 float-animation"
-        style={{ animationDelay: "3s" }}
-      />
+      <div className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] bg-red-700/10 rounded-full blur-3xl opacity-20 float-animation" style={{ animationDelay: "3s" }} />
 
-      <div className="relative z-10 w-full max-w-sm space-y-4">
-        <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation" style={{ animationDelay: "0.2s" }}>
-          {smartLink.artwork_url ? (
-            <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10 group">
-              <Image
-                src={smartLink.artwork_url || "/placeholder.svg"}
-                alt={smartLink.title}
-                width={192}
-                height={192}
-                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                crossOrigin="anonymous"
-              />
-
-              {audioSrc && !audioError && (
-                <>
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
-                    <button
-                      onClick={togglePlay}
-                      className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl"
-                      aria-label={isPlaying ? "Pause preview" : "Play preview"}
-                    >
-                      {isPlaying ? (
-                        <Pause className="w-6 h-6 text-white fill-white" />
-                      ) : (
-                        <Play className="w-6 h-6 text-white fill-white ml-0.5" />
-                      )}
-                    </button>
-
-                    {/* Volume Control - Vertical Popover */}
-                    <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={(e) => e.stopPropagation()}>
-                      {/* Slider Container - Hidden by default, reveals on hover */}
-                      <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
-                        <div
-                          className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer group/slider"
-                          onMouseDown={handleVolumeMouseDown}
-                          ref={volumeBarRef}
-                        >
-                          {/* Track */}
-                          <div className="absolute inset-0 bg-white/20 rounded-full" />
-                          {/* Fill */}
-                          <div
-                            className="absolute bottom-0 left-0 w-full bg-white rounded-full transition-all duration-75"
-                            style={{ height: `${isMuted ? 0 : volume * 100}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={toggleMute}
-                        className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white transition-all backdrop-blur-md shadow-sm"
-                      >
-                        {isMuted || volume === 0 ? (
-                          <VolumeX className="w-4 h-4" />
-                        ) : volume < 0.5 ? (
-                          <Volume1 className="w-4 h-4" />
-                        ) : (
-                          <Volume2 className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Timeline - Bottom */}
-                  <div
-                    className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20 cursor-pointer group/timeline hover:h-2 transition-all duration-200"
-                    onClick={(e) => e.stopPropagation()}
-                    onMouseDown={handleTimeMouseDown}
-                    ref={progressBarRef}
-                  >
-                    <div
-                      className="h-full bg-white/40 w-full absolute top-0 left-0"
+      {/* 
+         LAYOUT:
+         - hasTracks ( > 1 track) -> max-w-4xl (Split View)
+         - else -> max-w-sm (Centered View)
+      */}
+      <div className={`relative z-10 w-full transition-all duration-700 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${hasTracks ? 'max-w-4xl' : 'max-w-sm'}`}>
+        
+        <div className={`grid gap-6 ${hasTracks ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+          
+          {/* --- LEFT: Main Card --- */}
+          <div className="w-full">
+            <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full" style={{ animationDelay: "0.2s" }}>
+              
+              <div className="mb-6">
+                {smartLink.artwork_url ? (
+                  <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10 group mb-6">
+                    <Image
+                      src={smartLink.artwork_url}
+                      alt={smartLink.title}
+                      width={192}
+                      height={192}
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      crossOrigin="anonymous"
                     />
-                    <div
-                      className="h-full bg-red-500 relative transition-all duration-100 ease-linear"
-                      style={{ width: `${progress}%` }}
-                    >
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full scale-0 group-hover/timeline:scale-100 transition-transform shadow-sm" />
-                    </div>
-                  </div>
-                </>
-              )}
 
-              {/* Explicit audio element, hidden but functional */}
-              {audioSrc && (
-                <audio
-                  ref={audioRef}
-                  src={audioSrc}
-                  crossOrigin="anonymous"
-                  onTimeUpdate={handleTimeUpdate}
-                  onEnded={() => setIsPlaying(false)}
-                  onError={() => setAudioError(true)}
-                />
-              )}
-            </div>
-          ) : (
-            <div className="relative w-48 h-48 mx-auto rounded-2xl bg-gradient-to-br from-red-600/10 to-red-700/10 flex items-center justify-center mb-6 shadow-2xl shadow-black/20 backdrop-blur-xl ring-1 ring-white/5 group">
-              <span className="text-6xl text-red-500/30">🎵</span>
-
-              {audioSrc && !audioError && (
-                <>
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-sm rounded-2xl overflow-hidden">
-                    <button
-                      onClick={togglePlay}
-                      className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl"
-                      aria-label={isPlaying ? "Pause preview" : "Play preview"}
-                    >
-                      {isPlaying ? (
-                        <Pause className="w-6 h-6 text-white fill-white" />
-                      ) : (
-                        <Play className="w-6 h-6 text-white fill-white ml-0.5" />
-                      )}
-                    </button>
-
-                    {/* Volume Control - Top Right */}
-                    <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={(e) => e.stopPropagation()}>
-                      {/* Slider Container - Hidden by default, reveals on hover */}
-                      <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
-                        <div
-                          className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer group/slider"
-                          onMouseDown={handleVolumeMouseDown}
-                          ref={volumeBarRef}
-                        >
-                          {/* Track */}
-                          <div className="absolute inset-0 bg-white/20 rounded-full" />
-                          {/* Fill */}
-                          <div
-                            className="absolute bottom-0 left-0 w-full bg-white rounded-full transition-all duration-75"
-                            style={{ height: `${isMuted ? 0 : volume * 100}%` }}
-                          />
+                    {currentAudioSrc && !audioError && (
+                      <>
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
+                          <button onClick={togglePlay} className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl">
+                            {isPlaying ? <Pause className="w-6 h-6 text-white fill-white" /> : <Play className="w-6 h-6 text-white fill-white ml-0.5" />}
+                          </button>
+                          
+                          {/* Volume */}
+                          <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={e => e.stopPropagation()}>
+                            <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
+                               <div ref={volumeBarRef} className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer" onMouseDown={() => setIsDraggingVolume(true)}>
+                                  <div className="absolute inset-0 bg-white/20 rounded-full" />
+                                  <div className="absolute bottom-0 left-0 w-full bg-white rounded-full" style={{ height: `${isMuted ? 0 : volume * 100}%` }} />
+                               </div>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }} className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-all backdrop-blur-md">
+                              {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume1 className="w-4 h-4" />}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <button
-                        onClick={toggleMute}
-                        className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white/90 hover:text-white transition-all backdrop-blur-md shadow-sm"
-                      >
-                        {isMuted || volume === 0 ? (
-                          <VolumeX className="w-4 h-4" />
-                        ) : volume < 0.5 ? (
-                          <Volume1 className="w-4 h-4" />
-                        ) : (
-                          <Volume2 className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
 
-                    {/* Timeline - Bottom */}
-                    <div
-                      className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20 cursor-pointer group/timeline hover:h-2 transition-all duration-200"
-                      onClick={(e) => e.stopPropagation()}
-                      onMouseDown={handleTimeMouseDown}
-                      ref={progressBarRef} // Re-using ref might be tricky if both exist, but conditional rendering prevents collision
-                    >
-                      <div
-                        className="h-full bg-white/40 w-full absolute top-0 left-0"
-                      />
-                      <div
-                        className="h-full bg-red-500 relative transition-all duration-100 ease-linear"
-                        style={{ width: `${progress}%` }}
-                      >
-                        <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full scale-0 group-hover/timeline:scale-100 transition-transform shadow-sm" />
-                      </div>
-                    </div>
+                        {/* Progress Bar */}
+                        <div ref={progressBarRef} className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20 cursor-pointer group/timeline hover:h-2 transition-all duration-200" onClick={e => e.stopPropagation()} onMouseDown={() => setIsDraggingTime(true)}>
+                          <div className="h-full bg-white/40 w-full absolute top-0 left-0" />
+                          <div className="h-full bg-red-500 relative" style={{ width: `${progress}%` }}>
+                             <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full scale-0 group-hover/timeline:scale-100 transition-transform shadow-sm" />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {currentAudioSrc && (
+                      <audio ref={audioRef} src={currentAudioSrc} crossOrigin="anonymous" onTimeUpdate={handleTimeUpdate} onEnded={() => setIsPlaying(false)} onError={() => setAudioError(true)} />
+                    )}
                   </div>
-                </>
-              )}
-              {/* Explicit audio element for fallback case */}
-              {audioSrc && !smartLink.artwork_url && (
-                <audio
-                  ref={audioRef}
-                  src={audioSrc}
-                  crossOrigin="anonymous"
-                  onTimeUpdate={handleTimeUpdate}
-                  onEnded={() => setIsPlaying(false)}
-                  onError={() => setAudioError(true)}
-                />
-              )}
+                ) : (
+                  <div className="relative w-48 h-48 mx-auto rounded-2xl bg-gradient-to-br from-red-600/10 to-red-700/10 flex items-center justify-center mb-6 border border-white/5">
+                    <Disc className="w-16 h-16 text-white/20 animate-spin-slow" />
+                  </div>
+                )}
+
+                <div className="text-center space-y-1">
+                  <h1 className="text-2xl font-bold text-white tracking-tight leading-tight text-balance">{smartLink.title}</h1>
+                  {smartLink.artist && <p className="text-base text-white/50 font-light">{smartLink.artist}</p>}
+                </div>
+              </div>
+
+              {/* Links */}
+              <div className="space-y-2 w-full mt-auto">
+                {platformLinks.filter(l => l.platform !== "preview").map((link, i) => (
+                  <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className="block w-full" style={{ animationDelay: `${0.3 + i * 0.1}s` }}>
+                    <div className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-zinc-800"}`}>
+                      <div className="flex items-center gap-3">
+                        {platformLogos[link.platform] && (
+                          <Image src={platformLogos[link.platform]} alt={link.platform} width={24} height={24} className="w-5 h-5 brightness-0 invert" />
+                        )}
+                        <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
+                      </div>
+                      {/* <ExternalLink className="w-4 h-4 text-white/50" /> */}
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </Card>
+          </div>
+
+          {/* --- RIGHT: Track List (Only if > 1 track) --- */}
+          {hasTracks && (
+            <div className="w-full h-full min-h-[400px] md:min-h-0 animate-in fade-in slide-in-from-right-4 duration-700">
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20">
+                <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Music2 className="w-5 h-5 text-red-500" />
+                    <span className="font-semibold text-white">Album Tracks</span>
+                  </div>
+                  <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{tracks.length} songs</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+                  <div className="space-y-1">
+                    {tracks.map((track, i) => {
+                      const isCurrent = i === currentTrackIndex
+                      const isTrackPlaying = isCurrent && isPlaying
+                      return (
+                        <button key={track.id || i} onClick={() => playSpecificTrack(i)} className={`w-full group flex items-center gap-3 p-3 rounded-lg transition-all duration-200 text-left relative overflow-hidden ${isCurrent ? "bg-white/10 border border-white/10" : "hover:bg-white/5 border border-transparent"}`}>
+                          {isCurrent && <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500 rounded-l-lg" />}
+                          <div className={`flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-md text-xs transition-colors ${isCurrent ? "text-red-400" : "text-white/30 group-hover:text-white"}`}>
+                            {isTrackPlaying ? (
+                              <div className="flex gap-[2px] h-3 items-end">
+                                <span className="w-0.5 bg-current animate-music-bar-1 h-2" />
+                                <span className="w-0.5 bg-current animate-music-bar-2 h-3" />
+                                <span className="w-0.5 bg-current animate-music-bar-3 h-1.5" />
+                              </div>
+                            ) : (
+                              <span className="group-hover:hidden font-mono">{i + 1}</span>
+                            )}
+                            <Play className={`w-3 h-3 fill-current ${isTrackPlaying ? "hidden" : "hidden group-hover:block ml-0.5"}`} />
+                          </div>
+                          <div className="flex-1 min-w-0 z-10">
+                            <p className={`text-sm font-medium truncate ${isCurrent ? "text-white" : "text-white/80 group-hover:text-white"}`}>{track.title}</p>
+                            {(track.artist && track.artist !== smartLink.artist) && <p className="text-xs text-white/40 truncate mt-0.5">{track.artist}</p>}
+                          </div>
+                          <div className="text-xs text-white/20 font-mono flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {track.duration || "--:--"}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </Card>
+            </div>
+          )}
+          
+          {/* Debug Loading State (Optional) */}
+          {isLoadingTracks && !hasTracks && (
+            <div className="absolute -right-8 top-1/2 -translate-y-1/2 text-white/20">
+              <Loader2 className="w-5 h-5 animate-spin" />
             </div>
           )}
 
-          <div className={`text-center space-y-1 ${audioSrc ? "mb-6" : "mb-3"}`}>
-            <h1 className="text-2xl font-bold text-white tracking-tight leading-tight text-balance">
-              {smartLink.title}
-            </h1>
-            {smartLink.artist && <p className="text-base text-white/50 font-light">{smartLink.artist}</p>}
-          </div>
+        </div>
 
-          <div className="space-y-2">
-            {platformLinks
-              .filter(link => link.platform !== "preview")
-              .map((link, index) => (
-                <a
-                  key={link.id}
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block w-full"
-                  style={{ animationDelay: `${0.3 + index * 0.1}s` }}
-                >
-                  <div
-                    className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-red-600"}`}
-                    data-platform={link.platform}
-                  >
-                    <div className="flex items-center gap-3">
-                      {platformLogos[link.platform] && (
-                        <Image
-                          src={platformLogos[link.platform] || "/placeholder.svg"}
-                          alt={link.platform}
-                          width={24}
-                          height={24}
-                          className="w-5 h-5 brightness-0 invert"
-                        />
-                      )}
-                      <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
-                    </div>
-                    {/* Not sure I want to keep it or not */}
-                    {/* <ExternalLink className="w-4 h-4 opacity-50 group-hover:opacity-100 transition-opacity" /> */}
-                  </div>
-                </a>
-              ))}
-          </div>
-        </Card>
-
-        <div className="text-center reveal-animation" style={{ animationDelay: "0.6s" }}>
-          <Link
-            href="/"
-            className="text-xs text-white/40 hover:text-white/70 transition-colors font-light inline-flex items-center gap-2 group"
-          >
-            Create your own
-            <span className="group-hover:translate-x-1 transition-transform">→</span>
+        {/* Footer */}
+        <div className="text-center mt-8 reveal-animation" style={{ animationDelay: "0.6s" }}>
+          <Link href="/" className="text-xs text-white/40 hover:text-white/70 transition-colors font-light inline-flex items-center gap-2 group">
+            Create your own <span className="group-hover:translate-x-1 transition-transform">→</span>
           </Link>
         </div>
       </div>
