@@ -44,22 +44,20 @@ const platformMapping: Record<string, string> = {
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
-  const initUrl = searchParams.get("url")
+  let initUrl = searchParams.get("url")
 
   if (!initUrl) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
   }
-
+  
   let url: string = initUrl
 
   try {
-    // Since Odesli doesn't support Last.fm input, we parse it, find the iTunes link, 
-    // and use that to resolve the rest.
+    // 1. Handle Last.fm Input (Bridge to iTunes)
     if (url.includes("last.fm/music/")) {
       try {
         const urlObj = new URL(url)
         const pathParts = urlObj.pathname.split("/").filter(Boolean)
-        // Expected format: ['music', 'Artist', 'AlbumOr_', 'Track']
         
         if (pathParts.length >= 2) {
           const artist = decodeURIComponent(pathParts[1].replace(/\+/g, " "))
@@ -70,39 +68,30 @@ export async function GET(request: NextRequest) {
           let entity = "song"
 
           if (segment3) {
-            // Structure: /music/Artist/Album/Track OR /music/Artist/_/Track
             query = `${artist} ${segment3}`
             entity = "song"
           } else if (segment2 && segment2 !== "_") {
-            // Structure: /music/Artist/Album
             query = `${artist} ${segment2}`
             entity = "album"
-          } else {
-             // Just artist? Not supported for smart links usually, but we can try generic song search
-             // Or structure: /music/Artist/_ (Rare)
           }
 
           if (query) {
-             // Find matching iTunes link to serve as our "Source" for Odesli
              const itunesSearch = await fetch(
                `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=${entity}&limit=1`
              )
              const itunesData = await itunesSearch.json()
-             
              if (itunesData.resultCount > 0) {
                 const result = itunesData.results[0]
-                // Swap the Last.fm URL for the Apple Music URL
-                // This allows Odesli to find Spotify, Youtube, etc.
                 url = result.trackViewUrl || result.collectionViewUrl || url
              }
           }
         }
       } catch (e) {
-        console.warn("Failed to parse Last.fm URL, attempting direct resolve...", e)
+        console.warn("Failed to parse Last.fm URL", e)
       }
     }
 
-    // --- Odesli way ---
+    // 2. Resolve via Odesli
     const response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`)
 
     if (!response.ok) {
@@ -132,7 +121,7 @@ export async function GET(request: NextRequest) {
       })
       .filter((p): p is { platform: string; url: string } => p !== null)
 
-    // Re-generate the Last.fm link if it wasn't returned
+    // 3. Ensure Last.fm Output
     if (artist && title) {
         const safeArtist = encodeURIComponent(artist).replace(/%20/g, "+")
         const safeTitle = encodeURIComponent(title).replace(/%20/g, "+")
@@ -147,7 +136,7 @@ export async function GET(request: NextRequest) {
         }
     }
 
-    // --- PREVIEWS & ALBUM TRACKS ---
+    // 4. Preview & Tracks Logic
     let previewUrl = null
     let tracks: any[] = []
 

@@ -73,17 +73,21 @@ const platformColors: Record<string, string> = {
 }
 
 export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkViewerProps) {
-  // --- Prevent FOUC ---
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
   
-  // --- Data State ---
   const [tracks, setTracks] = useState<Track[]>(smartLink.tracks || [])
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
-  // --- Release Type Detection ---
+  // --- Height Sync State ---
+  const leftCardRef = useRef<HTMLDivElement>(null)
+  const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined)
+
   const releaseType = useMemo(() => {
+    const meta = platformLinks.find(p => p.platform === 'meta_type')
+    if (meta) return meta.url
+
     const spotify = platformLinks.find(p => p.platform === 'spotify')
     if (spotify) {
         if (spotify.url.includes('/track/')) return 'song'
@@ -95,13 +99,34 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     const deezer = platformLinks.find(p => p.platform === 'deezer')
     if (deezer && deezer.url.includes('/track/')) return 'song'
     
-    return 'album'
+    return 'album' 
   }, [platformLinks])
 
-  const hasTracks = tracks.length > 1
-  const showAlbumView = hasTracks && isSidebarOpen
+  const hasTracks = tracks.length > 0
+  const isAlbumMode = releaseType === 'album' || tracks.length > 1
+  const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
 
-  // --- Fetch Tracks Logic ---
+  // --- RESIZE OBSERVER ---
+  useEffect(() => {
+    if (!showAlbumView || !leftCardRef.current) return
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (window.innerWidth >= 768) {
+          const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
+          setRightCardHeight(height)
+        } else {
+          setRightCardHeight(undefined)
+        }
+      }
+    })
+
+    observer.observe(leftCardRef.current)
+
+    return () => observer.disconnect()
+  }, [showAlbumView, tracks.length])
+
+  // --- Fetch Tracks ---
   useEffect(() => {
     if (tracks.length > 0) return;
     if (releaseType === 'song') return;
@@ -115,7 +140,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
-            if (data.tracks.length > 1) setIsSidebarOpen(true)
+            if (data.tracks.length > 0) setIsSidebarOpen(true)
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)
@@ -132,11 +157,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
-  
-  // Volume: Default 25% (Linear value)
   const [volume, setVolume] = useState(0.25) 
   const [isMuted, setIsMuted] = useState(false)
-  
   const [isDraggingTime, setIsDraggingTime] = useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
 
@@ -145,7 +167,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const volumeBarRef = useRef<HTMLDivElement>(null)
 
   const globalPreview = platformLinks.find((link) => link.platform === "preview")?.url
-  
   const currentAudioSrc = hasTracks 
     ? (tracks[currentTrackIndex]?.preview_url || globalPreview)
     : globalPreview
@@ -180,13 +201,10 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }
 
-  // --- Volume Logic (Logarithmic) ---
   const getNaturalVolume = () => isMuted ? 0 : Math.pow(volume, 3)
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = getNaturalVolume()
-    }
+    if (audioRef.current) audioRef.current.volume = getNaturalVolume()
   }, [volume, isMuted, currentAudioSrc])
 
   useEffect(() => {
@@ -198,7 +216,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }, [currentTrackIndex, currentAudioSrc])
 
-  // Global Dragging Logic
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingTime && progressBarRef.current && audioRef.current) {
@@ -242,6 +259,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
   if (!mounted) return null
 
+  const visiblePlatforms = platformLinks.filter(l => l.platform !== "preview" && l.platform !== "meta_type")
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
       <div className="absolute top-1/4 left-1/3 w-[400px] h-[400px] bg-red-600/10 rounded-full blur-3xl opacity-20 float-animation" />
@@ -249,10 +268,10 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
       <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
         
-        <div className={`grid gap-6 ${showAlbumView ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+        <div className={`grid gap-6 ${showAlbumView ? 'grid-cols-1 md:grid-cols-2 items-start' : 'grid-cols-1'}`}>
           
           {/* --- LEFT: Main Card --- */}
-          <div className="w-full relative group/main">
+          <div className="w-full relative group/main" ref={leftCardRef}>
             <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full relative" style={{ animationDelay: "0.2s" }}>
               
               {hasTracks && !isSidebarOpen && (
@@ -279,12 +298,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
                     {currentAudioSrc && !audioError && (
                       <>
-                        {/* 
-                           Player Overlay 
-                           - Visible if Playing (opacity-100)
-                           - Visible on Hover (group-hover:opacity-100)
-                           - Visible on Touch/Active (active:opacity-100)
-                        */}
                         <div className={`absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[2px] transition-opacity duration-300 ${isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 active:opacity-100'}`}>
                           
                           <button onClick={togglePlay} className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl">
@@ -299,7 +312,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                                   <div className="absolute bottom-0 left-0 w-full bg-white rounded-full" style={{ height: `${isMuted ? 0 : volume * 100}%` }} />
                                </div>
                             </div>
-                            {/* Mobile-friendly: Click to toggle mute, hover to see slider (desktop) */}
                             <button onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }} className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-all backdrop-blur-md">
                               {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : volume < 0.5 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                             </button>
@@ -339,11 +351,10 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
               </div>
 
               <div className="space-y-2 w-full mt-auto">
-                {platformLinks.filter(l => l.platform !== "preview").map((link, i) => (
+                {visiblePlatforms.map((link, i) => (
                   <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className="block w-full" style={{ animationDelay: `${0.3 + i * 0.1}s` }}>
                     <div className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-zinc-800"}`}>
                       <div className="flex items-center gap-3 w-full">
-                        {/* Fixed Width Container for Icons - Ensures Alignment */}
                         <div className="w-10 flex items-center justify-center shrink-0">
                           {platformLogos[link.platform] && (
                             <Image 
@@ -351,7 +362,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                               alt={link.platform} 
                               width={24} 
                               height={24} 
-                              // Conditionally size Last.fm larger, others standard
                               className={`${(link.platform === 'last.fm' || link.platform === 'lastfm') ? 'w-9 h-6' : 'w-5 h-5'} object-contain brightness-0 invert`} 
                             />
                           )}
@@ -367,9 +377,14 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
           {/* --- RIGHT: Track List --- */}
           {showAlbumView && (
-            <div className="w-full h-full min-h-[400px] md:min-h-0 animate-in fade-in slide-in-from-right-4 duration-300">
-              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20">
-                <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between">
+            <div 
+              className="w-full animate-in fade-in slide-in-from-right-4 duration-300"
+              style={{ 
+                height: rightCardHeight ? `${rightCardHeight}px` : 'auto' 
+              }}
+            >
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-none">
+                <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <Music2 className="w-5 h-5 text-red-500" />
                     <span className="font-semibold text-white">Album Tracks</span>
@@ -380,7 +395,19 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                   </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+                <div 
+                  className="flex-1 overflow-y-auto p-3 pr-1
+                  [&::-webkit-scrollbar]:w-1.5 
+                  [&::-webkit-scrollbar-track]:bg-transparent 
+                  [&::-webkit-scrollbar-thumb]:bg-white/10 
+                  [&::-webkit-scrollbar-thumb]:rounded-full 
+                  hover:[&::-webkit-scrollbar-thumb]:bg-white/20 
+                  transition-colors"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(255,255,255,0.1) transparent'
+                  }}
+                >
                   <div className="space-y-1">
                     {tracks.map((track, i) => {
                       const isCurrent = i === currentTrackIndex
