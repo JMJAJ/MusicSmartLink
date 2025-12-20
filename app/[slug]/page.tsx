@@ -1,38 +1,68 @@
 import { notFound } from "next/navigation"
 import { createClient } from "@/lib/supabase/server"
-import { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import SmartLinkViewer from "@/components/smart-link-viewer"
 
 interface PageProps {
   params: Promise<{ slug: string }>
 }
 
+// This sets the color of the sidebar in Discord embeds
+export const viewport: Viewport = {
+  themeColor: "#ef4444", // Matching your red-500 theme
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
   const supabase = await createClient()
 
-  const { data: smartLink } = await supabase.from("smart_links").select("*").eq("slug", slug).single()
+  const { data: smartLink } = await supabase
+    .from("smart_links")
+    .select("*")
+    .eq("slug", slug)
+    .single()
 
   if (!smartLink) {
     return {
-      title: "Link Not Found - Music Smart Link",
+      title: "Link Not Found",
     }
   }
 
+  const title = smartLink.title
+  const artist = smartLink.artist || "Unknown Artist"
+  const description = `Listen to ${title} by ${artist} on your favorite music platform.`
+  const artwork = smartLink.artwork_url || "https://yourdomain.com/default-og.png" // Fallback image
+
   return {
-    title: `${smartLink.title} by ${smartLink.artist || "Unknown Artist"}`,
-    description: `Listen to ${smartLink.title} on your favorite music platform.`,
+    title: `${title} by ${artist}`,
+    description,
+    // Standard OpenGraph
     openGraph: {
-      title: `${smartLink.title} by ${smartLink.artist || "Unknown Artist"}`,
-      description: `Listen to ${smartLink.title} on your favorite music platform.`,
-      images: smartLink.artwork_url ? [smartLink.artwork_url] : [],
+      title: `${title} — ${artist}`,
+      description,
+      url: `https://yourdomain.com/${slug}`,
+      siteName: "SmartLink",
+      images: [
+        {
+          url: artwork,
+          width: 1200,
+          height: 1200,
+          alt: `${title} Artwork`,
+        },
+      ],
       type: "music.song",
     },
+    // Twitter / Discord Large Card
     twitter: {
       card: "summary_large_image",
-      title: `${smartLink.title} by ${smartLink.artist || "Unknown Artist"}`,
-      description: `Listen to ${smartLink.title} on your favorite music platform.`,
-      images: smartLink.artwork_url ? [smartLink.artwork_url] : [],
+      title: `${title} by ${artist}`,
+      description,
+      images: [artwork],
+    },
+    // Useful for search engines
+    other: {
+      "music:musician": artist,
+      "music:song": title,
     },
   }
 }
@@ -42,7 +72,11 @@ export default async function SmartLinkPage({ params }: PageProps) {
   const supabase = await createClient()
 
   // Fetch smart link data
-  const { data: smartLink, error: linkError } = await supabase.from("smart_links").select("*").eq("slug", slug).single()
+  const { data: smartLink, error: linkError } = await supabase
+    .from("smart_links")
+    .select("*")
+    .eq("slug", slug)
+    .single()
 
   if (linkError || !smartLink) {
     notFound()
