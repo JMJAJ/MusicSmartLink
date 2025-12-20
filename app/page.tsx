@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -22,6 +22,13 @@ interface SpotifyTrackData {
 }
 
 export default function HomePage() {
+  // --- Prevent FOUC (Flash of Unstyled Content) ---
+  const [mounted, setMounted] = useState(false)
+  
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const router = useRouter()
   const [sourceLink, setSourceLink] = useState("")
   const [title, setTitle] = useState("")
@@ -171,6 +178,11 @@ export default function HomePage() {
     "Amazon Music",
     "Bandcamp",
   ]
+
+  // Don't render until client-side hydration is complete
+  if (!mounted) {
+    return null
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
