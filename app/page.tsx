@@ -177,6 +177,7 @@ export default function HomePage() {
     "Deezer",
     "Amazon Music",
     "Bandcamp",
+    "Last.fm",
   ]
 
   // Don't render until client-side hydration is complete

@@ -11,16 +11,23 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const title = searchParams.get("title")
   const artist = searchParams.get("artist") || ""
+  const type = searchParams.get("type") // New Parameter
+
+  // 1. STOP if this is explicitly a song.
+  // This prevents finding the "Album" version of a "Single" with the same name.
+  if (type === "song") {
+    return NextResponse.json({ tracks: [] })
+  }
 
   if (!title) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 })
   }
 
   try {
-    let collectionId = null
     const query = `${title} ${artist}`
+    let collectionId = null
     
-    // STRATEGY 1: Search for an Album entity directly
+    // Search for Album specifically
     const albumSearchRes = await fetch(
       `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=album&limit=1`
     )
@@ -29,33 +36,20 @@ export async function GET(request: NextRequest) {
     if (albumData.resultCount > 0) {
       collectionId = albumData.results[0].collectionId
     } 
-    else {
-      // STRATEGY 2: Fallback - Search for a Song, then get its Album ID
-      // (Useful if the "Album" title is slightly different or it's an EP/Single)
-      const songSearchRes = await fetch(
-        `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=1`
-      )
-      const songData = await songSearchRes.json()
-      
-      if (songData.resultCount > 0) {
-        collectionId = songData.results[0].collectionId
-      }
-    }
 
     if (!collectionId) {
       return NextResponse.json({ tracks: [] })
     }
 
-    // 3. Lookup the Collection (Album) details to get all tracks
+    // Lookup tracks
     const lookupRes = await fetch(
       `https://itunes.apple.com/lookup?id=${collectionId}&entity=song&limit=200`
     )
     const lookupData = await lookupRes.json()
     
-    // Filter to keep only the tracks (remove the collection info wrapper)
+    // Filter out collection wrapper
     const rawTracks = lookupData.results.filter((item: any) => item.wrapperType === 'track')
     
-    // Map to simple format
     const tracks = rawTracks.map((t: any) => ({
       id: String(t.trackId),
       title: t.trackName,

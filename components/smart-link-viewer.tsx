@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  ExternalLink,
   Play,
   Pause,
   Volume2,
@@ -15,11 +14,9 @@ import {
   ListMusic
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import Image from "next/image"
 import Link from "next/link"
-
-// --- Interfaces ---
 
 export interface Track {
   id: string
@@ -58,6 +55,8 @@ const platformLogos: Record<string, string> = {
   deezer: "/deezer.svg",
   "amazon-music": "/amazon_music.svg",
   bandcamp: "/bandcamp.svg",
+  "last.fm": "/last_fm.svg",
+  lastfm: "/last_fm.svg",
 }
 
 const platformColors: Record<string, string> = {
@@ -69,6 +68,8 @@ const platformColors: Record<string, string> = {
   deezer: "bg-purple-600",
   "amazon-music": "bg-cyan-600",
   bandcamp: "bg-teal-600",
+  "last.fm": "bg-[#b90000]",
+  lastfm: "bg-[#b90000]",
 }
 
 export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkViewerProps) {
@@ -79,20 +80,37 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   // --- Data State ---
   const [tracks, setTracks] = useState<Track[]>(smartLink.tracks || [])
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
-  
-  // --- UI State ---
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+
+  // --- Release Type Detection ---
+  const releaseType = useMemo(() => {
+    const spotify = platformLinks.find(p => p.platform === 'spotify')
+    if (spotify) {
+        if (spotify.url.includes('/track/')) return 'song'
+        if (spotify.url.includes('/album/')) return 'album'
+    }
+    const apple = platformLinks.find(p => p.platform === 'apple-music')
+    if (apple && apple.url.includes('i=')) return 'song'
+    
+    const deezer = platformLinks.find(p => p.platform === 'deezer')
+    if (deezer && deezer.url.includes('/track/')) return 'song'
+    
+    return 'album'
+  }, [platformLinks])
 
   const hasTracks = tracks.length > 1
   const showAlbumView = hasTracks && isSidebarOpen
 
   // --- Fetch Tracks Logic ---
   useEffect(() => {
-    if (tracks.length === 0 && smartLink.title && smartLink.artist) {
+    if (tracks.length > 0) return;
+    if (releaseType === 'song') return;
+
+    if (smartLink.title && smartLink.artist) {
       const fetchTracks = async () => {
         setIsLoadingTracks(true)
         try {
-          const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}`)
+          const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}`)
           const data = await res.json()
           
           if (data.tracks && Array.isArray(data.tracks)) {
@@ -107,14 +125,16 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
       }
       fetchTracks()
     }
-  }, [smartLink.title, smartLink.artist, tracks.length])
+  }, [smartLink.title, smartLink.artist, tracks.length, releaseType])
 
   // --- Audio State ---
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [volume, setVolume] = useState(0.25)
+  
+  // Volume: Default 25% (Linear value)
+  const [volume, setVolume] = useState(0.25) 
   const [isMuted, setIsMuted] = useState(false)
   
   const [isDraggingTime, setIsDraggingTime] = useState(false)
@@ -160,19 +180,25 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }
 
+  // --- Volume Logic (Logarithmic) ---
+  const getNaturalVolume = () => isMuted ? 0 : Math.pow(volume, 3)
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.volume = getNaturalVolume()
+    }
+  }, [volume, isMuted, currentAudioSrc])
+
   useEffect(() => {
     if (audioRef.current && isPlaying) {
       audioRef.current.src = currentAudioSrc || ""
       audioRef.current.load()
+      audioRef.current.volume = getNaturalVolume()
       audioRef.current.play().catch(() => setIsPlaying(false))
     }
   }, [currentTrackIndex, currentAudioSrc])
 
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = isMuted ? 0 : volume
-  }, [volume, isMuted])
-
-  // Dragging
+  // Global Dragging Logic
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDraggingTime && progressBarRef.current && audioRef.current) {
@@ -214,16 +240,13 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
   const formatPlatformName = (p: string) => p.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
 
+  if (!mounted) return null
+
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
       <div className="absolute top-1/4 left-1/3 w-[400px] h-[400px] bg-red-600/10 rounded-full blur-3xl opacity-20 float-animation" />
       <div className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] bg-red-700/10 rounded-full blur-3xl opacity-20 float-animation" style={{ animationDelay: "3s" }} />
 
-      {/* 
-         LAYOUT CONTAINER
-         - Removed "transition-all duration-700" to fix the stretching effect.
-         - Layout now snaps instantly between centered (sm) and wide (4xl).
-      */}
       <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
         
         <div className={`grid gap-6 ${showAlbumView ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
@@ -232,7 +255,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           <div className="w-full relative group/main">
             <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full relative" style={{ animationDelay: "0.2s" }}>
               
-              {/* Toggle Button: Show Tracks */}
               {hasTracks && !isSidebarOpen && (
                 <button 
                   onClick={() => setIsSidebarOpen(true)}
@@ -257,11 +279,19 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
                     {currentAudioSrc && !audioError && (
                       <>
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
+                        {/* 
+                           Player Overlay 
+                           - Visible if Playing (opacity-100)
+                           - Visible on Hover (group-hover:opacity-100)
+                           - Visible on Touch/Active (active:opacity-100)
+                        */}
+                        <div className={`absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[2px] transition-opacity duration-300 ${isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 active:opacity-100'}`}>
+                          
                           <button onClick={togglePlay} className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl">
                             {isPlaying ? <Pause className="w-6 h-6 text-white fill-white" /> : <Play className="w-6 h-6 text-white fill-white ml-0.5" />}
                           </button>
                           
+                          {/* Volume Slider */}
                           <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={e => e.stopPropagation()}>
                             <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
                                <div ref={volumeBarRef} className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer" onMouseDown={() => setIsDraggingVolume(true)}>
@@ -269,8 +299,9 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                                   <div className="absolute bottom-0 left-0 w-full bg-white rounded-full" style={{ height: `${isMuted ? 0 : volume * 100}%` }} />
                                </div>
                             </div>
+                            {/* Mobile-friendly: Click to toggle mute, hover to see slider (desktop) */}
                             <button onClick={(e) => { e.stopPropagation(); setIsMuted(!isMuted); }} className="p-2 rounded-full bg-black/40 hover:bg-black/60 text-white transition-all backdrop-blur-md">
-                              {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume1 className="w-4 h-4" />}
+                              {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : volume < 0.5 ? <Volume1 className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
                             </button>
                           </div>
                         </div>
@@ -284,7 +315,15 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                       </>
                     )}
                     {currentAudioSrc && (
-                      <audio ref={audioRef} src={currentAudioSrc} crossOrigin="anonymous" onTimeUpdate={handleTimeUpdate} onEnded={() => setIsPlaying(false)} onError={() => setAudioError(true)} />
+                      <audio 
+                        ref={audioRef} 
+                        src={currentAudioSrc} 
+                        crossOrigin="anonymous" 
+                        onTimeUpdate={handleTimeUpdate} 
+                        onEnded={() => setIsPlaying(false)} 
+                        onError={() => setAudioError(true)}
+                        onLoadStart={(e) => { e.currentTarget.volume = getNaturalVolume() }}
+                      />
                     )}
                   </div>
                 ) : (
@@ -303,10 +342,20 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 {platformLinks.filter(l => l.platform !== "preview").map((link, i) => (
                   <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className="block w-full" style={{ animationDelay: `${0.3 + i * 0.1}s` }}>
                     <div className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-zinc-800"}`}>
-                      <div className="flex items-center gap-3">
-                        {platformLogos[link.platform] && (
-                          <Image src={platformLogos[link.platform]} alt={link.platform} width={24} height={24} className="w-5 h-5 brightness-0 invert" />
-                        )}
+                      <div className="flex items-center gap-3 w-full">
+                        {/* Fixed Width Container for Icons - Ensures Alignment */}
+                        <div className="w-10 flex items-center justify-center shrink-0">
+                          {platformLogos[link.platform] && (
+                            <Image 
+                              src={platformLogos[link.platform]} 
+                              alt={link.platform} 
+                              width={24} 
+                              height={24} 
+                              // Conditionally size Last.fm larger, others standard
+                              className={`${(link.platform === 'last.fm' || link.platform === 'lastfm') ? 'w-9 h-6' : 'w-5 h-5'} object-contain brightness-0 invert`} 
+                            />
+                          )}
+                        </div>
                         <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
                       </div>
                     </div>
@@ -327,14 +376,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                   </div>
                   <div className="flex items-center gap-3">
                      <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{tracks.length} songs</span>
-                     
-                     <button 
-                        onClick={() => setIsSidebarOpen(false)}
-                        className="text-white/40 hover:text-white transition-colors"
-                        aria-label="Close tracks"
-                     >
-                        <X className="w-5 h-5" />
-                     </button>
+                     <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
                   </div>
                 </div>
 
