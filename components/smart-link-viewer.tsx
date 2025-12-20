@@ -10,7 +10,9 @@ import {
   Music2,
   Disc,
   Clock,
-  Loader2
+  Loader2,
+  X,
+  ListMusic
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { useState, useRef, useEffect } from "react"
@@ -70,17 +72,22 @@ const platformColors: Record<string, string> = {
 }
 
 export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkViewerProps) {
+  // --- Prevent FOUC ---
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  
   // --- Data State ---
   const [tracks, setTracks] = useState<Track[]>(smartLink.tracks || [])
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   
-  // FIX: Only trigger Album View if there is MORE than 1 track.
-  // This prevents Single Releases from looking like empty albums.
+  // --- UI State ---
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+
   const hasTracks = tracks.length > 1
+  const showAlbumView = hasTracks && isSidebarOpen
 
   // --- Fetch Tracks Logic ---
   useEffect(() => {
-    // Only fetch if we don't have tracks and we have title/artist
     if (tracks.length === 0 && smartLink.title && smartLink.artist) {
       const fetchTracks = async () => {
         setIsLoadingTracks(true)
@@ -90,6 +97,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
+            if (data.tracks.length > 1) setIsSidebarOpen(true)
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)
@@ -116,10 +124,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const progressBarRef = useRef<HTMLDivElement>(null)
   const volumeBarRef = useRef<HTMLDivElement>(null)
 
-  // Audio Source: Fallback to global preview, or use specific track preview
   const globalPreview = platformLinks.find((link) => link.platform === "preview")?.url
   
-  // If we have tracks, use the specific one. If not, use global.
   const currentAudioSrc = hasTracks 
     ? (tracks[currentTrackIndex]?.preview_url || globalPreview)
     : globalPreview
@@ -154,14 +160,13 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     }
   }
 
-  // Reload audio on track switch
   useEffect(() => {
     if (audioRef.current && isPlaying) {
       audioRef.current.src = currentAudioSrc || ""
       audioRef.current.load()
       audioRef.current.play().catch(() => setIsPlaying(false))
     }
-  }, [currentTrackIndex, currentAudioSrc]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentTrackIndex, currentAudioSrc])
 
   useEffect(() => {
     if (audioRef.current) audioRef.current.volume = isMuted ? 0 : volume
@@ -211,23 +216,33 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
-      {/* Background Ambience */}
       <div className="absolute top-1/4 left-1/3 w-[400px] h-[400px] bg-red-600/10 rounded-full blur-3xl opacity-20 float-animation" />
       <div className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] bg-red-700/10 rounded-full blur-3xl opacity-20 float-animation" style={{ animationDelay: "3s" }} />
 
       {/* 
-         LAYOUT:
-         - hasTracks ( > 1 track) -> max-w-4xl (Split View)
-         - else -> max-w-sm (Centered View)
+         LAYOUT CONTAINER
+         - Removed "transition-all duration-700" to fix the stretching effect.
+         - Layout now snaps instantly between centered (sm) and wide (4xl).
       */}
-      <div className={`relative z-10 w-full transition-all duration-700 ease-[cubic-bezier(0.25,0.1,0.25,1)] ${hasTracks ? 'max-w-4xl' : 'max-w-sm'}`}>
+      <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
         
-        <div className={`grid gap-6 ${hasTracks ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+        <div className={`grid gap-6 ${showAlbumView ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
           
           {/* --- LEFT: Main Card --- */}
-          <div className="w-full">
-            <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full" style={{ animationDelay: "0.2s" }}>
+          <div className="w-full relative group/main">
+            <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full relative" style={{ animationDelay: "0.2s" }}>
               
+              {/* Toggle Button: Show Tracks */}
+              {hasTracks && !isSidebarOpen && (
+                <button 
+                  onClick={() => setIsSidebarOpen(true)}
+                  className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all z-20"
+                  aria-label="Show Tracks"
+                >
+                  <ListMusic className="w-5 h-5" />
+                </button>
+              )}
+
               <div className="mb-6">
                 {smartLink.artwork_url ? (
                   <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10 group mb-6">
@@ -247,7 +262,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                             {isPlaying ? <Pause className="w-6 h-6 text-white fill-white" /> : <Play className="w-6 h-6 text-white fill-white ml-0.5" />}
                           </button>
                           
-                          {/* Volume */}
                           <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={e => e.stopPropagation()}>
                             <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
                                <div ref={volumeBarRef} className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer" onMouseDown={() => setIsDraggingVolume(true)}>
@@ -261,7 +275,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                           </div>
                         </div>
 
-                        {/* Progress Bar */}
                         <div ref={progressBarRef} className="absolute bottom-0 left-0 right-0 h-1.5 bg-black/20 cursor-pointer group/timeline hover:h-2 transition-all duration-200" onClick={e => e.stopPropagation()} onMouseDown={() => setIsDraggingTime(true)}>
                           <div className="h-full bg-white/40 w-full absolute top-0 left-0" />
                           <div className="h-full bg-red-500 relative" style={{ width: `${progress}%` }}>
@@ -286,7 +299,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 </div>
               </div>
 
-              {/* Links */}
               <div className="space-y-2 w-full mt-auto">
                 {platformLinks.filter(l => l.platform !== "preview").map((link, i) => (
                   <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className="block w-full" style={{ animationDelay: `${0.3 + i * 0.1}s` }}>
@@ -297,7 +309,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                         )}
                         <span className="text-sm font-medium text-white">{formatPlatformName(link.platform)}</span>
                       </div>
-                      {/* <ExternalLink className="w-4 h-4 text-white/50" /> */}
                     </div>
                   </a>
                 ))}
@@ -305,16 +316,26 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
             </Card>
           </div>
 
-          {/* --- RIGHT: Track List (Only if > 1 track) --- */}
-          {hasTracks && (
-            <div className="w-full h-full min-h-[400px] md:min-h-0 animate-in fade-in slide-in-from-right-4 duration-700">
+          {/* --- RIGHT: Track List --- */}
+          {showAlbumView && (
+            <div className="w-full h-full min-h-[400px] md:min-h-0 animate-in fade-in slide-in-from-right-4 duration-300">
               <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20">
                 <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Music2 className="w-5 h-5 text-red-500" />
                     <span className="font-semibold text-white">Album Tracks</span>
                   </div>
-                  <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{tracks.length} songs</span>
+                  <div className="flex items-center gap-3">
+                     <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{tracks.length} songs</span>
+                     
+                     <button 
+                        onClick={() => setIsSidebarOpen(false)}
+                        className="text-white/40 hover:text-white transition-colors"
+                        aria-label="Close tracks"
+                     >
+                        <X className="w-5 h-5" />
+                     </button>
+                  </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
@@ -354,7 +375,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
             </div>
           )}
           
-          {/* Debug Loading State (Optional) */}
           {isLoadingTracks && !hasTracks && (
             <div className="absolute -right-8 top-1/2 -translate-y-1/2 text-white/20">
               <Loader2 className="w-5 h-5 animate-spin" />
@@ -363,7 +383,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
         </div>
 
-        {/* Footer */}
         <div className="text-center mt-8 reveal-animation" style={{ animationDelay: "0.6s" }}>
           <Link href="/" className="text-xs text-white/40 hover:text-white/70 transition-colors font-light inline-flex items-center gap-2 group">
             Create your own <span className="group-hover:translate-x-1 transition-transform">→</span>
