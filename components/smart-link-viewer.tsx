@@ -80,7 +80,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
-  // --- Height Sync State ---
   const leftCardRef = useRef<HTMLDivElement>(null)
   const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined)
 
@@ -102,34 +101,36 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     return 'album' 
   }, [platformLinks])
 
+  // View Logic
   const hasTracks = tracks.length > 0
   const isAlbumMode = releaseType === 'album' || tracks.length > 1
   const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
 
-  // --- RESIZE OBSERVER ---
+  // Resize Observer
   useEffect(() => {
     if (!showAlbumView || !leftCardRef.current) return
-
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (window.innerWidth >= 768) {
           const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
-          setRightCardHeight(height)
+          setRightCardHeight(Math.min(height, 700))
         } else {
           setRightCardHeight(undefined)
         }
       }
     })
-
     observer.observe(leftCardRef.current)
-
     return () => observer.disconnect()
   }, [showAlbumView, tracks.length])
 
-  // --- Fetch Tracks ---
+  // Fetch Logic
   useEffect(() => {
     if (tracks.length > 0) return;
-    if (releaseType === 'song') return;
+    
+    // FIX: Only skip fetching for "song" IF we already have a preview.
+    // If preview is missing, let it fetch so we can populate the player.
+    const hasGlobalPreview = !!platformLinks.find(l => l.platform === 'preview')
+    if (releaseType === 'song' && hasGlobalPreview) return;
 
     if (smartLink.title && smartLink.artist) {
       const fetchTracks = async () => {
@@ -140,7 +141,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
-            if (data.tracks.length > 0) setIsSidebarOpen(true)
+            if (data.tracks.length > 0 && releaseType !== 'song') setIsSidebarOpen(true)
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)
@@ -150,7 +151,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
       }
       fetchTracks()
     }
-  }, [smartLink.title, smartLink.artist, tracks.length, releaseType])
+  }, [smartLink.title, smartLink.artist, tracks.length, releaseType, platformLinks])
 
   // --- Audio State ---
   const [isPlaying, setIsPlaying] = useState(false)
@@ -171,7 +172,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     ? (tracks[currentTrackIndex]?.preview_url || globalPreview)
     : globalPreview
 
-  // --- Handlers ---
+  // Handlers
   const togglePlay = async () => {
     if (audioRef.current) {
       if (isPlaying) {
@@ -274,7 +275,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           <div className="w-full relative group/main" ref={leftCardRef}>
             <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full relative" style={{ animationDelay: "0.2s" }}>
               
-              {hasTracks && !isSidebarOpen && (
+              {hasTracks && isAlbumMode && !isSidebarOpen && (
                 <button 
                   onClick={() => setIsSidebarOpen(true)}
                   className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all z-20"
@@ -383,7 +384,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 height: rightCardHeight ? `${rightCardHeight}px` : 'auto' 
               }}
             >
-              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-none">
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[700px]">
                 <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <Music2 className="w-5 h-5 text-red-500" />

@@ -42,6 +42,11 @@ const platformMapping: Record<string, string> = {
   lastfm: "last.fm", 
 }
 
+// FIX: Normalize string to help iTunes search find matches for complex names
+const normalize = (str: string) => {
+  return str.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   let initUrl = searchParams.get("url")
@@ -49,11 +54,11 @@ export async function GET(request: NextRequest) {
   if (!initUrl) {
     return NextResponse.json({ error: "URL is required" }, { status: 400 })
   }
-  
+
   let url: string = initUrl
 
   try {
-    // 1. Handle Last.fm Input (Bridge to iTunes)
+    // 1. Handle Last.fm Input
     if (url.includes("last.fm/music/")) {
       try {
         const urlObj = new URL(url)
@@ -121,6 +126,12 @@ export async function GET(request: NextRequest) {
       })
       .filter((p): p is { platform: string; url: string } => p !== null)
 
+    // Inject Meta Type
+    platforms.push({
+        platform: "meta_type",
+        url: type 
+    })
+
     // 3. Ensure Last.fm Output
     if (artist && title) {
         const safeArtist = encodeURIComponent(artist).replace(/%20/g, "+")
@@ -136,63 +147,19 @@ export async function GET(request: NextRequest) {
         }
     }
 
-    // 4. Preview & Tracks Logic
+    // 4. Previews (FIXED with Normalization)
     let previewUrl = null
-    let tracks: any[] = []
-
-    if (type === "album") {
-      try {
-        const appleLink = data.linksByPlatform["appleMusic"]?.url
-        let appleId = null
-
-        if (appleLink) {
-          const match = appleLink.match(/\/(\d+)(\?|$)/)
-          if (match) appleId = match[1]
-        }
-
-        if (!appleId) {
-            const searchRes = await fetch(
-              `https://itunes.apple.com/search?term=${encodeURIComponent(title + " " + artist)}&media=music&entity=album&limit=1`
-            )
-            const searchData = await searchRes.json()
-            if (searchData.resultCount > 0) {
-                appleId = searchData.results[0].collectionId
-            }
-        }
-
-        if (appleId) {
-          const lookupRes = await fetch(
-            `https://itunes.apple.com/lookup?id=${appleId}&entity=song&limit=200`
-          )
-          const lookupData = await lookupRes.json()
-          
-          if (lookupData.resultCount > 1) {
-             const albumTracks = lookupData.results.filter((item: any) => item.wrapperType === 'track')
-             tracks = albumTracks.map((t: any) => ({
-                title: t.trackName,
-                artist: t.artistName,
-                duration: ((t.trackTimeMillis % 60000) / 1000).toFixed(0).padStart(2, '0'),
-                preview_url: t.previewUrl,
-                track_number: t.trackNumber
-             }))
-             if (tracks.length > 0) previewUrl = tracks[0].preview_url
-          }
-        }
-      } catch (err) { console.error(err) }
-    } 
+    const cleanQuery = `${normalize(title)} ${normalize(artist)}`
     
-    if (!previewUrl && tracks.length === 0) {
-        const query = `${title} ${artist}`
-        try {
-            const itunesResponse = await fetch(
-                `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&media=music&entity=song&limit=1`
-            )
-            const itunesData = await itunesResponse.json()
-            if (itunesData.resultCount > 0) {
-                previewUrl = itunesData.results[0].previewUrl
-            }
-        } catch (e) {}
-    }
+    try {
+        const itunesResponse = await fetch(
+            `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQuery)}&media=music&entity=song&limit=1`
+        )
+        const itunesData = await itunesResponse.json()
+        if (itunesData.resultCount > 0) {
+            previewUrl = itunesData.results[0].previewUrl
+        }
+    } catch (e) {}
 
     if (previewUrl) {
       platforms.push({ platform: "preview", url: previewUrl })
@@ -203,7 +170,6 @@ export async function GET(request: NextRequest) {
       artist,
       artworkUrl,
       platforms,
-      tracks,
     })
   } catch (error) {
     console.error("Resolve link error:", error)

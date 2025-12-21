@@ -15,26 +15,20 @@ interface PlatformLink {
   url: string
 }
 
-interface SpotifyTrackData {
-  title: string
-  artist: string
-  artworkUrl: string
-}
-
 export default function HomePage() {
-  // --- Prevent FOUC (Flash of Unstyled Content) ---
   const [mounted, setMounted] = useState(false)
-  
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  useEffect(() => { setMounted(true) }, [])
 
   const router = useRouter()
   const [sourceLink, setSourceLink] = useState("")
   const [title, setTitle] = useState("")
   const [artist, setArtist] = useState("")
   const [artworkUrl, setArtworkUrl] = useState("")
+  
+  // Hidden state for internal logic (Album vs Song)
+  const [hiddenMetaType, setHiddenMetaType] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  
   const [platformLinks, setPlatformLinks] = useState<PlatformLink[]>([
     { id: "initial-id", platform: "", url: "" },
   ])
@@ -60,21 +54,25 @@ export default function HomePage() {
       setArtworkUrl(data.artworkUrl || "")
 
       if (data.platforms && Array.isArray(data.platforms)) {
+        // 1. Extract Preview
         const preview = data.platforms.find((p: any) => p.platform === "preview")
-        if (preview) {
-          setPreviewUrl(preview.url)
-        }
+        if (preview) setPreviewUrl(preview.url)
 
+        // 2. Extract Meta Type (This fixes the "Platform: song/album" issue)
+        const meta = data.platforms.find((p: any) => p.platform === "meta_type")
+        if (meta) setHiddenMetaType(meta.url)
+
+        // 3. Filter Visible Links (Exclude preview AND meta_type)
         const newLinks = data.platforms
-          .filter((p: any) => p.platform !== "preview")
+          .filter((p: any) => p.platform !== "preview" && p.platform !== "meta_type")
           .map((p: any) => ({
             id: crypto.randomUUID(),
             platform: p.platform,
             url: p.url,
           }))
 
-        // Sort to prioritize common platforms
-        const priority = ["spotify", "apple-music", "youtube-music", "soundcloud"]
+        // Sort priority
+        const priority = ["spotify", "apple-music", "youtube-music", "soundcloud", "last.fm"]
         newLinks.sort((a: any, b: any) => {
           const indexA = priority.indexOf(a.platform)
           const indexB = priority.indexOf(b.platform)
@@ -96,14 +94,11 @@ export default function HomePage() {
 
   const handleSourceLinkChange = (value: string) => {
     setSourceLink(value)
-
     if (value.length > 10 && (value.startsWith("http://") || value.startsWith("https://"))) {
       try {
         new URL(value)
         fetchLinkData(value)
-      } catch (e) {
-        // invalid url
-      }
+      } catch (e) {}
     }
   }
 
@@ -123,12 +118,8 @@ export default function HomePage() {
 
   const generateSlug = (title: string) => {
     return (
-      title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)/g, "") +
-      "-" +
-      Math.random().toString(36).substring(2, 8)
+      title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") +
+      "-" + Math.random().toString(36).substring(2, 8)
     )
   }
 
@@ -140,6 +131,19 @@ export default function HomePage() {
     try {
       const slug = generateSlug(title)
 
+      // Re-assemble the list: Visible Links + Hidden Preview + Hidden Meta Type
+      const finalPlatforms = [
+        ...platformLinks.filter((p) => p.platform && p.url),
+      ]
+      
+      if (previewUrl) {
+        finalPlatforms.push({ id: "preview-link", platform: "preview", url: previewUrl })
+      }
+      
+      if (hiddenMetaType) {
+        finalPlatforms.push({ id: "meta-type-link", platform: "meta_type", url: hiddenMetaType })
+      }
+
       const linkResponse = await fetch("/api/smart-links", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -148,10 +152,7 @@ export default function HomePage() {
           title,
           artist,
           artwork_url: artworkUrl || null,
-          platforms: [
-            ...platformLinks.filter((p) => p.platform && p.url),
-            ...(previewUrl ? [{ platform: "preview", url: previewUrl }] : [])
-          ],
+          platforms: finalPlatforms,
         }),
       })
 
@@ -169,21 +170,10 @@ export default function HomePage() {
   }
 
   const platforms = [
-    "Spotify",
-    "Apple Music",
-    "YouTube Music",
-    "SoundCloud",
-    "Tidal",
-    "Deezer",
-    "Amazon Music",
-    "Bandcamp",
-    "Last.fm",
+    "Spotify", "Apple Music", "YouTube Music", "SoundCloud", "Tidal", "Deezer", "Amazon Music", "Bandcamp", "Last.fm"
   ]
 
-  // Don't render until client-side hydration is complete
-  if (!mounted) {
-    return null
-  }
+  if (!mounted) return null
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
