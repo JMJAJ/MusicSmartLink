@@ -125,23 +125,43 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
   // Fetch Logic
   useEffect(() => {
-    if (tracks.length > 0) return;
+    if (tracks.length > 0) return
+
+    // 1. Check if we have a global preview link
+    const hasGlobalPreview = !!platformLinks.find((l) => l.platform === "preview")
     
-    // FIX: Only skip fetching for "song" IF we already have a preview.
-    // If preview is missing, let it fetch so we can populate the player.
-    const hasGlobalPreview = !!platformLinks.find(l => l.platform === 'preview')
-    if (releaseType === 'song' && hasGlobalPreview) return;
+    // 2. Only skip fetching for "song" if we actually have a preview
+    if (releaseType === "song" && hasGlobalPreview) return
 
     if (smartLink.title && smartLink.artist) {
       const fetchTracks = async () => {
         setIsLoadingTracks(true)
         try {
-          const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}`)
-          const data = await res.json()
+          // EXTRACT APPLE ID: logic to find the specific ID from the URL
+          const appleLink = platformLinks.find((p) => p.platform === "apple-music")?.url
+          let appleId = ""
           
+          if (appleLink) {
+             // Try to match 'i=12345' (song in album)
+             const matchSong = appleLink.match(/[?&]i=(\d+)/)
+             if (matchSong) {
+                 appleId = matchSong[1]
+             } else {
+                 // Fallback: match last number in path
+                 const matchId = appleLink.match(/\/(\d+)(\?|$)/)
+                 if (matchId) appleId = matchId[1]
+             }
+          }
+
+          // Pass the appleId to the API
+          const res = await fetch(
+            `/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}&appleId=${appleId}`
+          )
+          const data = await res.json()
+
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
-            if (data.tracks.length > 0 && releaseType !== 'song') setIsSidebarOpen(true)
+            if (data.tracks.length > 0 && releaseType !== "song") setIsSidebarOpen(true)
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)

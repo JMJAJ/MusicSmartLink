@@ -152,12 +152,15 @@ export async function GET(request: NextRequest) {
     const cleanQuery = `${normalize(title)} ${normalize(artist)}`
     
     try {
+        // Fetch 5 results to increase odds of finding one with a preview
         const itunesResponse = await fetch(
-            `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQuery)}&media=music&entity=song&limit=1`
+            `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQuery)}&media=music&entity=song&limit=5`
         )
         const itunesData = await itunesResponse.json()
         if (itunesData.resultCount > 0) {
-            previewUrl = itunesData.results[0].previewUrl
+            // Filter for the first one that has a previewUrl
+            const match = itunesData.results.find((r: any) => r.previewUrl)
+            if (match) previewUrl = match.previewUrl
         }
     } catch (e) {}
 
