@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     title = decodeHtmlEntities(title)
     artist = decodeHtmlEntities(artist)
 
-    console.log("[v0] Extracted metadata:", { title, artist, artworkUrl, trackId })
+    console.log("[API] Extracted metadata:", { title, artist, artworkUrl, trackId })
 
     return NextResponse.json({
       title,
@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
       trackId,
     })
   } catch (error) {
-    console.error("[v0] Spotify metadata fetch error:", error)
+    console.error("[API] Spotify metadata fetch error:", error)
     return NextResponse.json({ error: "Failed to fetch track metadata" }, { status: 500 })
   }
 }

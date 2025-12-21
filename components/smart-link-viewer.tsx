@@ -113,7 +113,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
       for (const entry of entries) {
         if (window.innerWidth >= 768) {
           const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
-          setRightCardHeight(Math.min(height, 700))
+          setRightCardHeight(Math.min(height, 900))
         } else {
           setRightCardHeight(undefined)
         }
@@ -405,7 +405,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 height: rightCardHeight ? `${rightCardHeight}px` : 'auto' 
               }}
             >
-              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[700px]">
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[900px]">
                 <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <Music2 className="w-5 h-5 text-red-500" />
