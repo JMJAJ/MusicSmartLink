@@ -178,7 +178,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [volume, setVolume] = useState(0.25) 
+  const [volume, setVolume] = useState(0.5) 
   const [isMuted, setIsMuted] = useState(false)
   const [isDraggingTime, setIsDraggingTime] = useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
@@ -313,6 +313,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                       alt={smartLink.title}
                       width={192}
                       height={192}
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       crossOrigin="anonymous"
                     />

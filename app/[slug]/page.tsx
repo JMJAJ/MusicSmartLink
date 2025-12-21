@@ -9,7 +9,10 @@ interface PageProps {
 
 // This sets the color of the sidebar in Discord embeds
 export const viewport: Viewport = {
-  themeColor: "#ef4444", // Matching your red-500 theme
+  // #ef4444 is Tailwind's red-500
+  themeColor: "#dc2626", // red-600 theme
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
