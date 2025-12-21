@@ -42,7 +42,7 @@ const platformMapping: Record<string, string> = {
   lastfm: "last.fm", 
 }
 
-// FIX: Normalize string to help iTunes search find matches for complex names
+// Normalize string to help iTunes search find matches for complex names
 const normalize = (str: string) => {
   return str.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
 }

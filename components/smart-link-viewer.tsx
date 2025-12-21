@@ -83,6 +83,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const leftCardRef = useRef<HTMLDivElement>(null)
   const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined)
 
+  // Determine if this is a song or album
   const releaseType = useMemo(() => {
     const meta = platformLinks.find(p => p.platform === 'meta_type')
     if (meta) return meta.url
@@ -100,6 +101,26 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     
     return 'album' 
   }, [platformLinks])
+
+  // Calculate total duration
+  const totalDuration = useMemo(() => {
+    if (!tracks.length) return null
+
+    const totalSeconds = tracks.reduce((acc, track) => {
+      if (!track.duration) return acc
+      const parts = track.duration.split(":").map(Number)
+      // Handle "mm:ss" or potentially just "ss"
+      const minutes = parts.length === 2 ? parts[0] : 0
+      const seconds = parts.length === 2 ? parts[1] : parts[0]
+      return acc + minutes * 60 + seconds
+    }, 0)
+
+    const hours = Math.floor(totalSeconds / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+
+    if (hours > 0) return `${hours} hr ${minutes} min`
+    return `${minutes} min`
+  }, [tracks])
 
   // View Logic
   const hasTracks = tracks.length > 0
@@ -412,8 +433,16 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                     <span className="font-semibold text-white">Album Tracks</span>
                   </div>
                   <div className="flex items-center gap-3">
-                     <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{tracks.length} songs</span>
-                     <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                    <div className="flex items-center gap-2 text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">
+                      <span>{tracks.length} songs</span>
+                      {totalDuration && (
+                        <>
+                          <span className="text-white/20">•</span>
+                          <span>{totalDuration}</span>
+                        </>
+                      )}
+                    </div>
+                    <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
                   </div>
                 </div>
 

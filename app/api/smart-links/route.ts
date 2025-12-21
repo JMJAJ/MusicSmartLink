@@ -2,7 +2,6 @@ import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-// UPDATED SCHEMA
 const smartLinkSchema = z.object({
   slug: z.string().min(3).regex(/^[a-z0-9-]+$/, "Invalid slug format"),
   title: z.string().min(1).max(200),
