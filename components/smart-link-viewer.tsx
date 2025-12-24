@@ -19,6 +19,7 @@ import Image from "next/image"
 import Link from "next/link"
 import { extractColors } from "extract-colors"
 
+// --- TYPES ---
 export interface Track {
   id: string
   title: string
@@ -48,6 +49,7 @@ interface SmartLinkViewerProps {
   initialTracks?: Track[]
 }
 
+// --- CONSTANTS ---
 const platformLogos: Record<string, string> = {
   spotify: "/spotify.svg",
   "apple-music": "/apple_music.svg",
@@ -74,29 +76,31 @@ const platformColors: Record<string, string> = {
   lastfm: "bg-[#b90000]",
 }
 
+// Minimal SVG Noise Data URI for texture
+const NOISE_SVG = `data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='1'/%3E%3C/svg%3E`
+
 export default function SmartLinkViewer({ smartLink, platformLinks, initialTracks = [] }: SmartLinkViewerProps) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
   
   // --- Dynamic Color State ---
-  const [dominantColor, setDominantColor] = useState("#dc2626") // Default to Red-600
-  const [secondaryColor, setSecondaryColor] = useState("#b91c1c") // Default to Red-700
+  const [dominantColor, setDominantColor] = useState("#27272a") // Zinc-800 default
+  const [secondaryColor, setSecondaryColor] = useState("#3f3f46") // Zinc-700 default
+  const [accentColor, setAccentColor] = useState("#52525b") // Zinc-600 default
   
   useEffect(() => {
     if (smartLink.artwork_url) {
-      extractColors(smartLink.artwork_url, { crossOrigin: "anonymous", distance: 0.2 })
+      extractColors(smartLink.artwork_url, { crossOrigin: "anonymous", distance: 0.1 })
         .then((colors) => {
           if (colors.length > 0) {
+            // Sort by area/saturation usually gives good results, but extract-colors does a decent job by default
             setDominantColor(colors[0].hex)
-            if (colors.length > 1) {
-              setSecondaryColor(colors[1].hex)
-            } else {
-              setSecondaryColor(colors[0].hex)
-            }
+            setSecondaryColor(colors[1]?.hex || colors[0].hex)
+            setAccentColor(colors[2]?.hex || colors[0].hex)
           }
         })
         .catch((e) => {
-          console.log("Color extraction failed (likely CORS), using default red.", e)
+          console.log("Color extraction failed, using defaults.", e)
         })
     }
   }, [smartLink.artwork_url])
@@ -120,10 +124,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
     }
     const apple = platformLinks.find(p => p.platform === 'apple-music')
     if (apple && apple.url.includes('i=')) return 'song'
-    
     const deezer = platformLinks.find(p => p.platform === 'deezer')
     if (deezer && deezer.url.includes('/track/')) return 'song'
-    
     return 'album' 
   }, [platformLinks])
 
@@ -132,7 +134,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   const isAlbumMode = releaseType === 'album' || tracks.length > 1
   const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
 
-  // Total Duration Calculation
+  // Total Duration
   const totalDuration = useMemo(() => {
     if (!tracks.length) return null
     const totalSeconds = tracks.reduce((acc, track) => {
@@ -166,10 +168,9 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
     return () => observer.disconnect()
   }, [showAlbumView, tracks.length])
 
-  // Client-side Fetch Fallback
+  // Fallback Fetch
   useEffect(() => {
     if (tracks.length > 0) return;
-    
     const hasGlobalPreview = !!platformLinks.find(l => l.platform === 'preview')
     if (releaseType === 'song' && hasGlobalPreview) return;
 
@@ -187,7 +188,6 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                  if (matchId) appleId = matchId[1]
              }
           }
-
           const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}&appleId=${appleId}`)
           const data = await res.json()
           
@@ -210,7 +210,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [volume, setVolume] = useState(0.50) 
+  const [volume, setVolume] = useState(0.25) 
   const [isMuted, setIsMuted] = useState(false)
   const [isDraggingTime, setIsDraggingTime] = useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
@@ -317,14 +317,46 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden bg-black selection:bg-white/20">
       
-      {/* --- DYNAMIC BACKGROUND --- */}
+      {/* --- ATMOSPHERIC BACKGROUND --- */}
+      
+      {/* 1. Base Gradient Fill (Removes the "Black Void") */}
       <div 
-        className="absolute top-1/4 left-1/3 w-[400px] h-[400px] rounded-full blur-[100px] opacity-30 float-animation transition-colors duration-1000 ease-in-out pointer-events-none" 
-        style={{ backgroundColor: dominantColor }}
+         className="absolute inset-0 transition-colors duration-1000 ease-in-out"
+         style={{ 
+             background: `radial-gradient(circle at center, ${dominantColor}05 0%, #000000 100%)` 
+         }}
       />
+
+      {/* 2. Spinning Mesh Gradient (The "Aurora") */}
+      {/* Using mix-blend-mode to create depth where colors overlap */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 w-[140%] h-[140%] -translate-x-1/2 -translate-y-1/2 animate-[spin_80s_linear_infinite] opacity-40">
+          
+          {/* Blob 1: Dominant (Large) */}
+          <div 
+            className="absolute top-[10%] left-[20%] w-[50%] h-[50%] rounded-full blur-[120px] mix-blend-screen transition-colors duration-1000" 
+            style={{ backgroundColor: dominantColor }}
+          />
+
+          {/* Blob 2: Secondary (Large, Offset) */}
+          <div 
+            className="absolute bottom-[10%] right-[20%] w-[60%] h-[60%] rounded-full blur-[140px] mix-blend-screen transition-colors duration-1000" 
+            style={{ backgroundColor: secondaryColor }} 
+          />
+
+           {/* Blob 3: Accent (Connecting them) */}
+           <div 
+            className="absolute bottom-[20%] left-[30%] w-[40%] h-[40%] rounded-full blur-[100px] mix-blend-screen transition-colors duration-1000" 
+            style={{ backgroundColor: accentColor }} 
+          />
+        </div>
+      </div>
+
+      {/* 3. Film Grain Overlay (The "Texture") */}
+      {/* This binds the light to the dark, removing the "digital" banding look */}
       <div 
-        className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] rounded-full blur-[100px] opacity-20 float-animation transition-colors duration-1000 ease-in-out pointer-events-none" 
-        style={{ animationDelay: "3s", backgroundColor: secondaryColor }} 
+        className="absolute inset-0 opacity-[0.07] pointer-events-none mix-blend-overlay"
+        style={{ backgroundImage: `url("${NOISE_SVG}")` }}
       />
 
       <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
@@ -334,12 +366,11 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
           {/* --- LEFT: Main Card --- */}
           <div className="w-full relative group/main" ref={leftCardRef}>
             <Card 
-              // Added bg-black/20 to match the tracklist style
               className="glass-card shadow-2xl border-white/10 bg-black/20 p-6 reveal-animation flex flex-col h-full relative overflow-hidden" 
               style={{ animationDelay: "0.2s" }}
             >
               
-              {/* Dynamic Tint Overlay */}
+              {/* Dynamic Tint inside the card */}
               <div 
                 className="absolute inset-0 opacity-10 pointer-events-none transition-colors duration-1000"
                 style={{ background: `linear-gradient(to bottom right, ${dominantColor}, transparent)` }}
