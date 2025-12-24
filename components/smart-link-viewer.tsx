@@ -210,7 +210,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0)
   const [audioError, setAudioError] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [volume, setVolume] = useState(0.5) 
+  const [volume, setVolume] = useState(0.50) 
   const [isMuted, setIsMuted] = useState(false)
   const [isDraggingTime, setIsDraggingTime] = useState(false)
   const [isDraggingVolume, setIsDraggingVolume] = useState(false)
