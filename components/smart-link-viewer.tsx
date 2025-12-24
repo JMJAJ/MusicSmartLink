@@ -17,6 +17,7 @@ import { Card } from "@/components/ui/card"
 import { useState, useRef, useEffect, useMemo } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { extractColors } from "extract-colors"
 
 export interface Track {
   id: string
@@ -44,6 +45,7 @@ export interface PlatformLink {
 interface SmartLinkViewerProps {
   smartLink: SmartLink
   platformLinks: PlatformLink[]
+  initialTracks?: Track[]
 }
 
 const platformLogos: Record<string, string> = {
@@ -72,18 +74,41 @@ const platformColors: Record<string, string> = {
   lastfm: "bg-[#b90000]",
 }
 
-export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkViewerProps) {
+export default function SmartLinkViewer({ smartLink, platformLinks, initialTracks = [] }: SmartLinkViewerProps) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
   
-  const [tracks, setTracks] = useState<Track[]>(smartLink.tracks || [])
+  // --- Dynamic Color State ---
+  const [dominantColor, setDominantColor] = useState("#dc2626") // Default to Red-600
+  const [secondaryColor, setSecondaryColor] = useState("#b91c1c") // Default to Red-700
+  
+  useEffect(() => {
+    if (smartLink.artwork_url) {
+      extractColors(smartLink.artwork_url, { crossOrigin: "anonymous", distance: 0.2 })
+        .then((colors) => {
+          if (colors.length > 0) {
+            setDominantColor(colors[0].hex)
+            if (colors.length > 1) {
+              setSecondaryColor(colors[1].hex)
+            } else {
+              setSecondaryColor(colors[0].hex)
+            }
+          }
+        })
+        .catch((e) => {
+          console.log("Color extraction failed (likely CORS), using default red.", e)
+        })
+    }
+  }, [smartLink.artwork_url])
+
+  // --- Track Logic ---
+  const [tracks, setTracks] = useState<Track[]>(initialTracks.length > 0 ? initialTracks : (smartLink.tracks || []))
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
 
   const leftCardRef = useRef<HTMLDivElement>(null)
   const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined)
 
-  // Determine if this is a song or album
   const releaseType = useMemo(() => {
     const meta = platformLinks.find(p => p.platform === 'meta_type')
     if (meta) return meta.url
@@ -102,14 +127,17 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     return 'album' 
   }, [platformLinks])
 
-  // Calculate total duration
+  // View Logic
+  const hasTracks = tracks.length > 0
+  const isAlbumMode = releaseType === 'album' || tracks.length > 1
+  const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
+
+  // Total Duration Calculation
   const totalDuration = useMemo(() => {
     if (!tracks.length) return null
-
     const totalSeconds = tracks.reduce((acc, track) => {
       if (!track.duration) return acc
       const parts = track.duration.split(":").map(Number)
-      // Handle "mm:ss" or potentially just "ss"
       const minutes = parts.length === 2 ? parts[0] : 0
       const seconds = parts.length === 2 ? parts[1] : parts[0]
       return acc + minutes * 60 + seconds
@@ -117,15 +145,9 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
 
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
-
     if (hours > 0) return `${hours} hr ${minutes} min`
     return `${minutes} min`
   }, [tracks])
-
-  // View Logic
-  const hasTracks = tracks.length > 0
-  const isAlbumMode = releaseType === 'album' || tracks.length > 1
-  const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
 
   // Resize Observer
   useEffect(() => {
@@ -144,45 +166,34 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
     return () => observer.disconnect()
   }, [showAlbumView, tracks.length])
 
-  // Fetch Logic
+  // Client-side Fetch Fallback
   useEffect(() => {
-    if (tracks.length > 0) return
-
-    // 1. Check if we have a global preview link
-    const hasGlobalPreview = !!platformLinks.find((l) => l.platform === "preview")
+    if (tracks.length > 0) return;
     
-    // 2. Only skip fetching for "song" if we actually have a preview
-    if (releaseType === "song" && hasGlobalPreview) return
+    const hasGlobalPreview = !!platformLinks.find(l => l.platform === 'preview')
+    if (releaseType === 'song' && hasGlobalPreview) return;
 
     if (smartLink.title && smartLink.artist) {
       const fetchTracks = async () => {
         setIsLoadingTracks(true)
         try {
-          // EXTRACT APPLE ID: logic to find the specific ID from the URL
           const appleLink = platformLinks.find((p) => p.platform === "apple-music")?.url
           let appleId = ""
-          
           if (appleLink) {
-             // Try to match 'i=12345' (song in album)
              const matchSong = appleLink.match(/[?&]i=(\d+)/)
-             if (matchSong) {
-                 appleId = matchSong[1]
-             } else {
-                 // Fallback: match last number in path
+             if (matchSong) appleId = matchSong[1]
+             else {
                  const matchId = appleLink.match(/\/(\d+)(\?|$)/)
                  if (matchId) appleId = matchId[1]
              }
           }
 
-          // Pass the appleId to the API
-          const res = await fetch(
-            `/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}&appleId=${appleId}`
-          )
+          const res = await fetch(`/api/album-tracks?title=${encodeURIComponent(smartLink.title)}&artist=${encodeURIComponent(smartLink.artist || "")}&type=${releaseType}&appleId=${appleId}`)
           const data = await res.json()
-
+          
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
-            if (data.tracks.length > 0 && releaseType !== "song") setIsSidebarOpen(true)
+            if (data.tracks.length > 0 && releaseType !== 'song') setIsSidebarOpen(true)
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)
@@ -304,9 +315,17 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
   const visiblePlatforms = platformLinks.filter(l => l.platform !== "preview" && l.platform !== "meta_type")
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden">
-      <div className="absolute top-1/4 left-1/3 w-[400px] h-[400px] bg-red-600/10 rounded-full blur-3xl opacity-20 float-animation" />
-      <div className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] bg-red-700/10 rounded-full blur-3xl opacity-20 float-animation" style={{ animationDelay: "3s" }} />
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden bg-black selection:bg-white/20">
+      
+      {/* --- DYNAMIC BACKGROUND --- */}
+      <div 
+        className="absolute top-1/4 left-1/3 w-[400px] h-[400px] rounded-full blur-[100px] opacity-30 float-animation transition-colors duration-1000 ease-in-out pointer-events-none" 
+        style={{ backgroundColor: dominantColor }}
+      />
+      <div 
+        className="absolute bottom-1/4 right-1/3 w-[400px] h-[400px] rounded-full blur-[100px] opacity-20 float-animation transition-colors duration-1000 ease-in-out pointer-events-none" 
+        style={{ animationDelay: "3s", backgroundColor: secondaryColor }} 
+      />
 
       <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
         
@@ -314,8 +333,18 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
           
           {/* --- LEFT: Main Card --- */}
           <div className="w-full relative group/main" ref={leftCardRef}>
-            <Card className="glass-card shadow-2xl border-white/10 p-6 reveal-animation flex flex-col h-full relative" style={{ animationDelay: "0.2s" }}>
+            <Card 
+              // Added bg-black/20 to match the tracklist style
+              className="glass-card shadow-2xl border-white/10 bg-black/20 p-6 reveal-animation flex flex-col h-full relative overflow-hidden" 
+              style={{ animationDelay: "0.2s" }}
+            >
               
+              {/* Dynamic Tint Overlay */}
+              <div 
+                className="absolute inset-0 opacity-10 pointer-events-none transition-colors duration-1000"
+                style={{ background: `linear-gradient(to bottom right, ${dominantColor}, transparent)` }}
+              />
+
               {hasTracks && isAlbumMode && !isSidebarOpen && (
                 <button 
                   onClick={() => setIsSidebarOpen(true)}
@@ -326,7 +355,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 </button>
               )}
 
-              <div className="mb-6">
+              <div className="mb-6 relative z-10">
                 {smartLink.artwork_url ? (
                   <div className="relative w-48 h-48 mx-auto rounded-2xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10 group mb-6">
                     <Image
@@ -334,20 +363,19 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                       alt={smartLink.title}
                       width={192}
                       height={192}
-                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                      sizes="(max-width: 768px) 192px, 192px"
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       crossOrigin="anonymous"
                     />
 
                     {currentAudioSrc && !audioError && (
                       <>
-                        <div className={`absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[2px] transition-opacity duration-300 ${isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 active:opacity-100'}`}>
+                        <div className={`absolute inset-0 bg-black/40 flex items-center justify-center backdrop-blur-[2px] transition-opacity duration-300 ${isPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
                           
                           <button onClick={togglePlay} className="w-14 h-14 rounded-full bg-white/20 border border-white/30 backdrop-blur-md flex items-center justify-center hover:bg-white/30 hover:scale-105 transition-all duration-200 shadow-xl">
                             {isPlaying ? <Pause className="w-6 h-6 text-white fill-white" /> : <Play className="w-6 h-6 text-white fill-white ml-0.5" />}
                           </button>
                           
-                          {/* Volume Slider */}
                           <div className="absolute bottom-3 right-3 flex flex-col items-center gap-2 group/volume z-20" onClick={e => e.stopPropagation()}>
                             <div className="h-0 overflow-hidden group-hover/volume:h-24 transition-all duration-300 flex flex-col justify-end items-center mb-1 opacity-0 group-hover/volume:opacity-100">
                                <div ref={volumeBarRef} className="w-1.5 h-20 bg-black/20 backdrop-blur-md rounded-full relative cursor-pointer" onMouseDown={() => setIsDraggingVolume(true)}>
@@ -382,7 +410,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                     )}
                   </div>
                 ) : (
-                  <div className="relative w-48 h-48 mx-auto rounded-2xl bg-gradient-to-br from-red-600/10 to-red-700/10 flex items-center justify-center mb-6 border border-white/5">
+                  <div className="relative w-48 h-48 mx-auto rounded-2xl bg-white/5 flex items-center justify-center mb-6 border border-white/5">
                     <Disc className="w-16 h-16 text-white/20 animate-spin-slow" />
                   </div>
                 )}
@@ -393,7 +421,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 </div>
               </div>
 
-              <div className="space-y-2 w-full mt-auto">
+              <div className="space-y-2 w-full mt-auto relative z-10">
                 {visiblePlatforms.map((link, i) => (
                   <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" className="block w-full" style={{ animationDelay: `${0.3 + i * 0.1}s` }}>
                     <div className={`platform-button h-10 px-4 rounded-lg backdrop-blur-xl border transition-all duration-200 flex items-center justify-between hover:scale-[1.01] active:scale-[0.99] ${platformColors[link.platform] || "bg-zinc-800"}`}>
@@ -426,23 +454,25 @@ export default function SmartLinkViewer({ smartLink, platformLinks }: SmartLinkV
                 height: rightCardHeight ? `${rightCardHeight}px` : 'auto' 
               }}
             >
-              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[900px]">
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[900px] relative">
+                
+                {/* Header */}
                 <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <Music2 className="w-5 h-5 text-red-500" />
                     <span className="font-semibold text-white">Album Tracks</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">
-                      <span>{tracks.length} songs</span>
-                      {totalDuration && (
-                        <>
-                          <span className="text-white/20">•</span>
-                          <span>{totalDuration}</span>
-                        </>
-                      )}
+                     <div className="flex items-center gap-2 text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">
+                        <span>{tracks.length} songs</span>
+                        {totalDuration && (
+                            <>
+                            <span className="text-white/20">•</span>
+                            <span>{totalDuration}</span>
+                            </>
+                        )}
                     </div>
-                    <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                     <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
                   </div>
                 </div>
 
