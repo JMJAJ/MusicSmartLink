@@ -11,7 +11,10 @@ import {
   Clock,
   Loader2,
   X,
-  ListMusic
+  ListMusic,
+  FileText,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { useState, useRef, useEffect, useMemo } from "react"
@@ -108,7 +111,15 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   // --- Track Logic ---
   const [tracks, setTracks] = useState<Track[]>(initialTracks.length > 0 ? initialTracks : (smartLink.tracks || []))
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+  const [sidebarView, setSidebarView] = useState<'tracks' | 'lyrics' | null>('tracks')
+  
+  // --- Lyrics State ---
+  const [lyrics, setLyrics] = useState<{ synced: string | null; plain: string | null } | null>(null)
+  const [isLoadingLyrics, setIsLoadingLyrics] = useState(false)
+  const [parsedLyrics, setParsedLyrics] = useState<Array<{ time: number; text: string }>>([])
+  const [currentLyricIndex, setCurrentLyricIndex] = useState(-1)
+  const [previewOffset, setPreviewOffset] = useState(31000) // Offset in milliseconds
+  const lyricsContainerRef = useRef<HTMLDivElement>(null)
 
   const leftCardRef = useRef<HTMLDivElement>(null)
   const [rightCardHeight, setRightCardHeight] = useState<number | undefined>(undefined)
@@ -132,7 +143,10 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   // View Logic
   const hasTracks = tracks.length > 0
   const isAlbumMode = releaseType === 'album' || tracks.length > 1
-  const showAlbumView = hasTracks && isAlbumMode && isSidebarOpen
+  const hasLyrics = !!(lyrics?.synced || lyrics?.plain)
+  const showSidebar = sidebarView !== null && (sidebarView === 'tracks' ? hasTracks && isAlbumMode : hasLyrics)
+  const showAlbumView = showSidebar && sidebarView === 'tracks'
+  const showLyricsView = showSidebar && sidebarView === 'lyrics'
 
   // Total Duration
   const totalDuration = useMemo(() => {
@@ -153,7 +167,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
 
   // Resize Observer
   useEffect(() => {
-    if (!showAlbumView || !leftCardRef.current) return
+    if (!showSidebar || !leftCardRef.current) return
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         if (window.innerWidth >= 768) {
@@ -166,7 +180,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
     })
     observer.observe(leftCardRef.current)
     return () => observer.disconnect()
-  }, [showAlbumView, tracks.length])
+  }, [showSidebar, tracks.length])
 
   // Fallback Fetch
   useEffect(() => {
@@ -193,7 +207,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
           
           if (data.tracks && Array.isArray(data.tracks)) {
             setTracks(data.tracks)
-            if (data.tracks.length > 0 && releaseType !== 'song') setIsSidebarOpen(true)
+            if (data.tracks.length > 0 && releaseType !== 'song') setSidebarView('tracks')
           }
         } catch (error) {
           console.error("Failed to load album tracks", error)
@@ -204,6 +218,68 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
       fetchTracks()
     }
   }, [smartLink.title, smartLink.artist, tracks.length, releaseType, platformLinks])
+
+  // Fetch Lyrics
+  useEffect(() => {
+    const fetchLyrics = async () => {
+      if (!smartLink.title || !smartLink.artist) return
+      
+      setIsLoadingLyrics(true)
+      try {
+        const params = new URLSearchParams({
+          track: smartLink.title,
+          artist: smartLink.artist,
+        })
+        
+        const res = await fetch(`/api/lyrics?${params.toString()}`)
+        if (res.ok) {
+          const data = await res.json()
+          setLyrics({
+            synced: data.syncedLyrics,
+            plain: data.plainLyrics,
+          })
+          
+          // Parse synced lyrics
+          if (data.syncedLyrics) {
+            const lines = data.syncedLyrics.split('\n')
+            const parsed: Array<{ time: number; text: string }> = []
+            
+            for (const line of lines) {
+              const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/)
+              if (match) {
+                const minutes = parseInt(match[1])
+                const seconds = parseInt(match[2])
+                const centiseconds = parseInt(match[3])
+                const timeMs = (minutes * 60 + seconds) * 1000 + centiseconds * 10
+                const text = match[4].trim()
+                if (text) {
+                  parsed.push({ time: timeMs, text })
+                }
+              }
+            }
+            setParsedLyrics(parsed)
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load lyrics", error)
+      } finally {
+        setIsLoadingLyrics(false)
+      }
+    }
+    
+    fetchLyrics()
+  }, [smartLink.title, smartLink.artist])
+
+  // Auto-scroll lyrics
+  useEffect(() => {
+    if (currentLyricIndex >= 0 && lyricsContainerRef.current && showLyricsView) {
+      const container = lyricsContainerRef.current
+      const activeLine = container.querySelector(`[data-lyric-index="${currentLyricIndex}"]`)
+      if (activeLine) {
+        activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }
+  }, [currentLyricIndex, showLyricsView])
 
   // --- Audio State ---
   const [isPlaying, setIsPlaying] = useState(false)
@@ -305,6 +381,22 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
       const current = audioRef.current.currentTime
       const duration = audioRef.current.duration || 1
       setProgress((current / duration) * 100)
+      
+      // Update current lyric based on time with preview offset
+      if (parsedLyrics.length > 0) {
+        const currentTimeMs = (current * 1000) + previewOffset
+        let index = -1
+        for (let i = 0; i < parsedLyrics.length; i++) {
+          if (currentTimeMs >= parsedLyrics[i].time) {
+            index = i
+          } else {
+            break
+          }
+        }
+        if (index !== currentLyricIndex) {
+          setCurrentLyricIndex(index)
+        }
+      }
     }
   }
 
@@ -359,9 +451,9 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
         style={{ backgroundImage: `url("${NOISE_SVG}")` }}
       />
 
-      <div className={`relative z-10 w-full ${showAlbumView ? 'max-w-4xl' : 'max-w-sm'}`}>
+      <div className={`relative z-10 w-full ${showSidebar ? 'max-w-4xl' : 'max-w-sm'}`}>
         
-        <div className={`grid gap-6 ${showAlbumView ? 'grid-cols-1 md:grid-cols-2 items-start' : 'grid-cols-1'}`}>
+        <div className={`grid gap-6 ${showSidebar ? 'grid-cols-1 md:grid-cols-2 items-start' : 'grid-cols-1'}`}>
           
           {/* --- LEFT: Main Card --- */}
           <div className="w-full relative group/main" ref={leftCardRef}>
@@ -376,14 +468,28 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                 style={{ background: `linear-gradient(to bottom right, ${dominantColor}, transparent)` }}
               />
 
-              {hasTracks && isAlbumMode && !isSidebarOpen && (
-                <button 
-                  onClick={() => setIsSidebarOpen(true)}
-                  className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all z-20"
-                  aria-label="Show Tracks"
-                >
-                  <ListMusic className="w-5 h-5" />
-                </button>
+              {/* Toggle buttons when sidebar is closed */}
+              {!showSidebar && (
+                <div className="absolute top-4 right-4 flex gap-2 z-20">
+                  {hasTracks && isAlbumMode && (
+                    <button 
+                      onClick={() => setSidebarView('tracks')}
+                      className="p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all"
+                      aria-label="Show Tracks"
+                    >
+                      <ListMusic className="w-5 h-5" />
+                    </button>
+                  )}
+                  {hasLyrics && (
+                    <button 
+                      onClick={() => setSidebarView('lyrics')}
+                      className="p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all"
+                      aria-label="Show Lyrics"
+                    >
+                      <FileText className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
               )}
 
               <div className="mb-6 relative z-10">
@@ -503,7 +609,16 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                             </>
                         )}
                     </div>
-                     <button onClick={() => setIsSidebarOpen(false)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                    {hasLyrics && (
+                      <button 
+                        onClick={() => setSidebarView('lyrics')}
+                        className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all"
+                        aria-label="Show Lyrics"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </button>
+                    )}
+                     <button onClick={() => setSidebarView(null)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
                   </div>
                 </div>
 
@@ -551,6 +666,100 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                       )
                     })}
                   </div>
+                </div>
+              </Card>
+            </div>
+          )}
+
+          {/* --- RIGHT: Lyrics Panel --- */}
+          {showLyricsView && (
+            <div 
+              className="w-full animate-in fade-in slide-in-from-right-4 duration-300"
+              style={{ 
+                height: rightCardHeight ? `${rightCardHeight}px` : 'auto' 
+              }}
+            >
+              <Card className="glass-card shadow-2xl border-white/10 flex flex-col h-full overflow-hidden bg-black/20 max-h-[500px] md:max-h-[900px] relative">
+                
+                {/* Header */}
+                <div className="p-5 border-b border-white/10 bg-white/5 backdrop-blur-md flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-red-500" />
+                    <span className="font-semibold text-white">
+                      Lyrics {lyrics?.synced && <span className="text-xs text-white/40 font-normal ml-1">(Synced)</span>}
+                    </span>
+                    {/* {isPlaying && currentAudioSrc && (
+                      <div className="flex items-center gap-1 text-xs text-white/40">
+                        <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+                        <span>Playing</span>
+                      </div>
+                    )} */}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {hasTracks && isAlbumMode && (
+                      <button 
+                        onClick={() => setSidebarView('tracks')}
+                        className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all"
+                        aria-label="Show Tracks"
+                      >
+                        <ListMusic className="w-4 h-4" />
+                      </button>
+                    )}
+                    <button onClick={() => setSidebarView(null)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+                  </div>
+                </div>
+
+                <div 
+                  ref={lyricsContainerRef}
+                  className="flex-1 overflow-y-auto p-4
+                  [&::-webkit-scrollbar]:w-1.5 
+                  [&::-webkit-scrollbar-track]:bg-transparent 
+                  [&::-webkit-scrollbar-thumb]:bg-white/10 
+                  [&::-webkit-scrollbar-thumb]:rounded-full 
+                  hover:[&::-webkit-scrollbar-thumb]:bg-white/20 
+                  transition-colors"
+                  style={{
+                    scrollbarWidth: 'thin',
+                    scrollbarColor: 'rgba(255,255,255,0.1) transparent'
+                  }}
+                >
+                  {lyrics?.synced && parsedLyrics.length > 0 ? (
+                    <div className="space-y-1">
+                      {!currentAudioSrc && (
+                        <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-200/80 text-xs">
+                          ⚠️ No audio preview available. Lyrics sync requires audio playback.
+                        </div>
+                      )}
+                      {parsedLyrics.map((line, index) => (
+                        <div
+                          key={index}
+                          data-lyric-index={index}
+                          className={`text-base transition-all duration-200 py-1.5 px-3 rounded-md ${
+                            index === currentLyricIndex
+                              ? 'text-white font-semibold bg-red-500/20 border-l-2 border-red-500'
+                              : index < currentLyricIndex
+                              ? 'text-white/30'
+                              : 'text-white/60'
+                          }`}
+                        >
+                          {line.text}
+                        </div>
+                      ))}
+                    </div>
+                  ) : lyrics?.plain ? (
+                    <pre className="text-sm text-white/60 whitespace-pre-wrap font-sans leading-relaxed">
+                      {lyrics.plain}
+                    </pre>
+                  ) : isLoadingLyrics ? (
+                    <div className="flex items-center justify-center h-full gap-2 text-white/40">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="text-sm">Loading lyrics...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-white/40 text-sm">
+                      No lyrics available
+                    </div>
+                  )}
                 </div>
               </Card>
             </div>

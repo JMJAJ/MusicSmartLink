@@ -42,16 +42,16 @@ export async function POST(request: Request) {
     const { slug, title, artist, artwork_url, platforms } = result.data
     const supabase = await createClient()
 
-    // 2. Check for existing link
+    // 2. Check for existing link by title + artist (prevent duplicates)
     const { data: existingLink } = await supabase
       .from("smart_links")
       .select("slug")
-      .eq("slug", slug) // Better to check exact slug match for uniqueness
+      .eq("title", title)
+      .eq("artist", artist || null)
       .maybeSingle()
 
     if (existingLink) {
-       // If slug exists, maybe append a random string or return existing?
-       // For now, let's assume if it exists we return it.
+       // Return existing link instead of creating duplicate
        return NextResponse.json({ slug: existingLink.slug })
     }
 
