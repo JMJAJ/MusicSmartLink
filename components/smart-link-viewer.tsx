@@ -116,9 +116,10 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   // --- Lyrics State ---
   const [lyrics, setLyrics] = useState<{ synced: string | null; plain: string | null } | null>(null)
   const [isLoadingLyrics, setIsLoadingLyrics] = useState(false)
+  const [lyricsError, setLyricsError] = useState(false)
   const [parsedLyrics, setParsedLyrics] = useState<Array<{ time: number; text: string }>>([])
   const [currentLyricIndex, setCurrentLyricIndex] = useState(-1)
-  const [previewOffset, setPreviewOffset] = useState(31000) // Offset in milliseconds
+  const [previewOffset, setPreviewOffset] = useState(0) // Offset in milliseconds (auto-detected)
   const lyricsContainerRef = useRef<HTMLDivElement>(null)
 
   const leftCardRef = useRef<HTMLDivElement>(null)
@@ -143,8 +144,8 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   // View Logic
   const hasTracks = tracks.length > 0
   const isAlbumMode = releaseType === 'album' || tracks.length > 1
-  const hasLyrics = !!(lyrics?.synced || lyrics?.plain)
-  const showSidebar = sidebarView !== null && (sidebarView === 'tracks' ? hasTracks && isAlbumMode : hasLyrics)
+  const hasLyrics = !!(lyrics?.synced || lyrics?.plain) || isLoadingLyrics
+  const showSidebar = sidebarView !== null && (sidebarView === 'tracks' ? hasTracks && isAlbumMode : true)
   const showAlbumView = showSidebar && sidebarView === 'tracks'
   const showLyricsView = showSidebar && sidebarView === 'lyrics'
 
@@ -225,6 +226,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
       if (!smartLink.title || !smartLink.artist) return
       
       setIsLoadingLyrics(true)
+      setLyricsError(false)
       try {
         const params = new URLSearchParams({
           track: smartLink.title,
@@ -259,9 +261,12 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
             }
             setParsedLyrics(parsed)
           }
+        } else {
+          setLyricsError(true)
         }
       } catch (error) {
         console.error("Failed to load lyrics", error)
+        setLyricsError(true)
       } finally {
         setIsLoadingLyrics(false)
       }
@@ -299,6 +304,35 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
   const currentAudioSrc = hasTracks 
     ? (tracks[currentTrackIndex]?.preview_url || globalPreview)
     : globalPreview
+
+  // Detect preview provider and set default offset
+  useEffect(() => {
+    if (currentAudioSrc) {
+      // Check which platform the preview is from
+      const spotifyPlatform = platformLinks.find(p => p.platform === 'spotify')
+      const applePlatform = platformLinks.find(p => p.platform === 'apple-music')
+      
+      let provider = 'Unknown'
+      let defaultOffset = 0
+      
+      // Spotify previews typically start at 30-31 seconds
+      if (spotifyPlatform && currentAudioSrc.includes('scdn.co')) {
+        provider = 'Spotify'
+        defaultOffset = 31000
+      }
+      // Apple Music previews typically start at 45 seconds
+      else if (applePlatform && (currentAudioSrc.includes('apple') || currentAudioSrc.includes('mzstatic'))) {
+        provider = 'Apple Music'
+        defaultOffset = 45000
+      }
+      
+      console.log(`[Lyrics Sync] Preview provider: ${provider}`)
+      console.log(`[Lyrics Sync] Preview URL: ${currentAudioSrc}`)
+      console.log(`[Lyrics Sync] Default offset: ${defaultOffset}ms (${defaultOffset / 1000}s)`)
+      
+      setPreviewOffset(defaultOffset)
+    }
+  }, [currentAudioSrc, platformLinks])
 
   // Handlers
   const togglePlay = async () => {
@@ -394,6 +428,9 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
           }
         }
         if (index !== currentLyricIndex) {
+          if (index >= 0) {
+            console.log(`[Lyrics Sync] Line ${index + 1}: "${parsedLyrics[index].text}" (time: ${(currentTimeMs / 1000).toFixed(1)}s)`)
+          }
           setCurrentLyricIndex(index)
         }
       }
@@ -480,15 +517,13 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                       <ListMusic className="w-5 h-5" />
                     </button>
                   )}
-                  {hasLyrics && (
-                    <button 
-                      onClick={() => setSidebarView('lyrics')}
-                      className="p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all"
-                      aria-label="Show Lyrics"
-                    >
-                      <FileText className="w-5 h-5" />
-                    </button>
-                  )}
+                  <button 
+                    onClick={() => setSidebarView('lyrics')}
+                    className="p-2 rounded-full bg-white/5 hover:bg-white/20 text-white/50 hover:text-white transition-all"
+                    aria-label="Show Lyrics"
+                  >
+                    <FileText className="w-5 h-5" />
+                  </button>
                 </div>
               )}
 
@@ -609,15 +644,13 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                             </>
                         )}
                     </div>
-                    {hasLyrics && (
-                      <button 
-                        onClick={() => setSidebarView('lyrics')}
-                        className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all"
-                        aria-label="Show Lyrics"
-                      >
-                        <FileText className="w-4 h-4" />
-                      </button>
-                    )}
+                    <button 
+                      onClick={() => setSidebarView('lyrics')}
+                      className="p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all"
+                      aria-label="Show Lyrics"
+                    >
+                      <FileText className="w-4 h-4" />
+                    </button>
                      <button onClick={() => setSidebarView(null)} className="text-white/40 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
                   </div>
                 </div>
@@ -671,6 +704,7 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
             </div>
           )}
 
+
           {/* --- RIGHT: Lyrics Panel --- */}
           {showLyricsView && (
             <div 
@@ -694,6 +728,12 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                         <span>Playing</span>
                       </div>
                     )} */}
+                    {isLoadingLyrics && (
+                      <div className="flex items-center gap-1 text-xs text-white/40">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        <span>Searching...</span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     {hasTracks && isAlbumMode && (
@@ -723,7 +763,15 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                     scrollbarColor: 'rgba(255,255,255,0.1) transparent'
                   }}
                 >
-                  {lyrics?.synced && parsedLyrics.length > 0 ? (
+                  {isLoadingLyrics ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-3 text-white/40">
+                      <Loader2 className="w-8 h-8 animate-spin" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Searching for lyrics...</p>
+                        <p className="text-xs mt-1">Looking up "{smartLink.title}" by {smartLink.artist}</p>
+                      </div>
+                    </div>
+                  ) : lyrics?.synced && parsedLyrics.length > 0 ? (
                     <div className="space-y-1">
                       {!currentAudioSrc && (
                         <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-200/80 text-xs">
@@ -750,14 +798,21 @@ export default function SmartLinkViewer({ smartLink, platformLinks, initialTrack
                     <pre className="text-sm text-white/60 whitespace-pre-wrap font-sans leading-relaxed">
                       {lyrics.plain}
                     </pre>
-                  ) : isLoadingLyrics ? (
-                    <div className="flex items-center justify-center h-full gap-2 text-white/40">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span className="text-sm">Loading lyrics...</span>
+                  ) : lyricsError ? (
+                    <div className="flex flex-col items-center justify-center h-full gap-3 text-white/40">
+                      <FileText className="w-12 h-12 opacity-20" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">Failed to load lyrics</p>
+                        <p className="text-xs mt-1">Network error or service unavailable</p>
+                      </div>
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-full text-white/40 text-sm">
-                      No lyrics available
+                    <div className="flex flex-col items-center justify-center h-full gap-3 text-white/40">
+                      <FileText className="w-12 h-12 opacity-20" />
+                      <div className="text-center">
+                        <p className="text-sm font-medium">No lyrics found</p>
+                        <p className="text-xs mt-1">Lyrics not available for this song</p>
+                      </div>
                     </div>
                   )}
                 </div>
