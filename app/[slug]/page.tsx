@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation"
-import { createClient } from "@/lib/supabase/server"
+import { getSmartLinkBySlug, getPlatformLinks } from "@/lib/db"
 import type { Metadata, Viewport } from "next"
 import SmartLinkViewer from "@/components/smart-link-viewer"
 
@@ -17,13 +17,7 @@ export const viewport: Viewport = {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params
-  const supabase = await createClient()
-
-  const { data: smartLink } = await supabase
-    .from("smart_links")
-    .select("*")
-    .eq("slug", slug)
-    .single()
+  const smartLink = await getSmartLinkBySlug(slug)
 
   if (!smartLink) {
     return {
@@ -72,28 +66,16 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function SmartLinkPage({ params }: PageProps) {
   const { slug } = await params
-  const supabase = await createClient()
 
   // Fetch smart link data
-  const { data: smartLink, error: linkError } = await supabase
-    .from("smart_links")
-    .select("*")
-    .eq("slug", slug)
-    .single()
+  const smartLink = await getSmartLinkBySlug(slug)
 
-  if (linkError || !smartLink) {
+  if (!smartLink) {
     notFound()
   }
 
   // Fetch platform links
-  const { data: platformLinks, error: platformError } = await supabase
-    .from("platform_links")
-    .select("*")
-    .eq("smart_link_id", smartLink.id)
+  const platformLinks = await getPlatformLinks(smartLink.id)
 
-  if (platformError) {
-    notFound()
-  }
-
-  return <SmartLinkViewer smartLink={smartLink} platformLinks={platformLinks || []} />
+  return <SmartLinkViewer smartLink={smartLink} platformLinks={platformLinks} />
 }

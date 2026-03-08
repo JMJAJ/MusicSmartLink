@@ -1,4 +1,9 @@
-import { createClient } from "@/lib/supabase/server"
+import { 
+  getSmartLinkByTitleArtist, 
+  insertSmartLink, 
+  insertPlatformLinks,
+  deleteSmartLink 
+} from "@/lib/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
@@ -40,15 +45,9 @@ export async function POST(request: Request) {
     }
 
     const { slug, title, artist, artwork_url, platforms } = result.data
-    const supabase = await createClient()
 
     // 2. Check for existing link by title + artist (prevent duplicates)
-    const { data: existingLink } = await supabase
-      .from("smart_links")
-      .select("slug")
-      .eq("title", title)
-      .eq("artist", artist || null)
-      .maybeSingle()
+    const existingLink = await getSmartLinkByTitleArtist(title, artist || null)
 
     if (existingLink) {
        // Return existing link instead of creating duplicate
@@ -56,39 +55,22 @@ export async function POST(request: Request) {
     }
 
     // 3. Insert Smart Link
-    const { data: smartLink, error: linkError } = await supabase
-      .from("smart_links")
-      .insert({
-        slug,
-        title,
-        artist: artist || null,
-        artwork_url: artwork_url || null,
-      })
-      .select()
-      .single()
+    const smartLink = await insertSmartLink(slug, title, artist || null, artwork_url || null)
 
-    if (linkError) {
-      console.error("[API] DB Error:", linkError)
-      return NextResponse.json({ error: linkError.message }, { status: 400 })
+    if (!smartLink) {
+      console.error("[API] DB Error: Failed to insert smart link")
+      return NextResponse.json({ error: "Failed to create smart link" }, { status: 400 })
     }
 
     // 4. Insert Platforms
     if (platforms && platforms.length > 0) {
-      const platformData = platforms.map((p) => ({
-        smart_link_id: smartLink.id,
-        platform: p.platform,
-        url: p.url,
-      }))
+      const success = await insertPlatformLinks(smartLink.id, platforms)
 
-      const { error: platformError } = await supabase
-        .from("platform_links")
-        .insert(platformData)
-
-      if (platformError) {
-        console.error("[API] Platform DB Error:", platformError)
-        // Optional: Cleanup the smart link if platforms fail
-        await supabase.from("smart_links").delete().eq("id", smartLink.id)
-        return NextResponse.json({ error: platformError.message }, { status: 400 })
+      if (!success) {
+        console.error("[API] Platform DB Error")
+        // Cleanup the smart link if platforms fail
+        await deleteSmartLink(smartLink.id)
+        return NextResponse.json({ error: "Failed to insert platform links" }, { status: 400 })
       }
     }
 
