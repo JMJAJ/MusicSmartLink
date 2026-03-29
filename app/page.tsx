@@ -43,11 +43,11 @@ export default function HomePage() {
     try {
       const response = await fetch(`/api/resolve-link?url=${encodeURIComponent(url)}`)
 
-      if (!response.ok) {
-        throw new Error("Failed to fetch track data")
-      }
-
       const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || data.details || "Failed to fetch track data")
+      }
 
       setTitle(data.title || "")
       setArtist(data.artist || "")
@@ -86,7 +86,8 @@ export default function HomePage() {
       }
     } catch (err) {
       console.error(err)
-      setError("Could not fetch track data. Please enter details manually.")
+      const message = err instanceof Error ? err.message : "Could not fetch track data. Please enter details manually."
+      setError(message)
     } finally {
       setIsFetching(false)
     }

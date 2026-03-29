@@ -56,6 +56,7 @@ export async function GET(request: NextRequest) {
   }
 
   let url: string = initUrl
+  console.log("[resolve-link] Processing URL:", initUrl)
 
   try {
     // 1. Handle Last.fm Input
@@ -97,10 +98,23 @@ export async function GET(request: NextRequest) {
     }
 
     // 2. Resolve via Odesli
-    const response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`)
+    console.log("[resolve-link] Calling Odesli API for:", url)
+    const response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`, {
+      headers: {
+        "User-Agent": "MusicSmartLink/1.0"
+      }
+    })
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch link data: ${response.status}`)
+      const errorText = await response.text().catch(() => "Unable to read response")
+      console.error("[resolve-link] Odesli API error:", response.status, errorText)
+      
+      if (response.status === 404) {
+        return NextResponse.json({ 
+          error: "This link is not recognized as a music URL. Try a Spotify, Apple Music, or YouTube Music link." 
+        }, { status: 400 })
+      }
+      throw new Error(`Odesli API error (${response.status}): ${errorText}`)
     }
 
     const data: SongLinkResponse = await response.json()
@@ -175,7 +189,20 @@ export async function GET(request: NextRequest) {
       platforms,
     })
   } catch (error) {
-    console.error("Resolve link error:", error)
-    return NextResponse.json({ error: "Failed to resolve link metadata" }, { status: 500 })
+    console.error("[resolve-link] Error:", error)
+    
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    
+    // Provide more specific error messages
+    if (errorMessage.includes("fetch") || errorMessage.includes("ECONNREFUSED")) {
+      return NextResponse.json({ 
+        error: "Unable to connect to music services. Please try again later." 
+      }, { status: 503 })
+    }
+    
+    return NextResponse.json({ 
+      error: "Failed to resolve this music link. Please check the URL or enter details manually.",
+      details: errorMessage
+    }, { status: 500 })
   }
 }
