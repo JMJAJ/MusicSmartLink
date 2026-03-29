@@ -80,18 +80,21 @@ export async function createDbClient() {
   const useSupabase = await checkSupabaseHealth()
   
   if (useSupabase) {
+    console.log("[DB] Using Supabase")
     const supabase = await createSupabaseClient()
     return { type: "supabase" as const, client: supabase }
   }
+  
+  console.log("[DB] Supabase unavailable, trying Neon...")
   
   // Verify Neon is available
   const neonHealthy = await checkNeonConnection()
   if (!neonHealthy) {
-    // Try Supabase anyway as last resort
-    const supabase = await createSupabaseClient()
-    return { type: "supabase" as const, client: supabase }
+    console.error("[DB] Both Supabase and Neon are unavailable!")
+    throw new Error("Database unavailable: Both Supabase (paused) and Neon (connection failed) are not accessible. Check your Neon environment variables.")
   }
   
+  console.log("[DB] Using Neon")
   return { type: "neon" as const }
 }
 
@@ -170,6 +173,63 @@ async function getPlatformLinksNeon(smartLinkId: string): Promise<PlatformLink[]
     "SELECT * FROM platform_links WHERE smart_link_id = $1",
     [smartLinkId]
   )
+}
+
+// Find cached song by Spotify URL (to bypass rate limiting)
+export async function findCachedSongBySpotifyUrl(spotifyUrl: string): Promise<{ title: string; artist: string | null; artworkUrl: string | null; platforms: PlatformLink[] } | null> {
+  const db = await createDbClient()
+  
+  // Normalize the Spotify URL (remove query params)
+  const cleanUrl = spotifyUrl.split("?")[0]
+  
+  try {
+    if (db.type === "supabase") {
+      const { data, error } = await db.client
+        .from("platform_links")
+        .select("smart_link_id, smart_links(title, artist, artwork_url)")
+        .eq("platform", "spotify")
+        .ilike("url", `${cleanUrl}%`)
+        .limit(1)
+        .maybeSingle()
+      
+      if (error || !data) return null
+      
+      const smartLink = Array.isArray(data.smart_links) ? data.smart_links[0] : data.smart_links
+      if (!smartLink) return null
+      
+      const platforms = await getPlatformLinks(data.smart_link_id)
+      return {
+        title: smartLink.title,
+        artist: smartLink.artist,
+        artworkUrl: smartLink.artwork_url,
+        platforms
+      }
+    }
+    
+    // Neon fallback
+    const rows = await queryNeon<{ smart_link_id: string; title: string; artist: string | null; artwork_url: string | null }>(
+      `SELECT pl.smart_link_id, sl.title, sl.artist, sl.artwork_url 
+       FROM platform_links pl 
+       JOIN smart_links sl ON pl.smart_link_id = sl.id 
+       WHERE pl.platform = 'spotify' AND pl.url ILIKE $1 
+       LIMIT 1`,
+      [`${cleanUrl}%`]
+    )
+    
+    if (rows.length === 0) return null
+    
+    const row = rows[0]
+    const platforms = await getPlatformLinks(row.smart_link_id)
+    return {
+      title: row.title,
+      artist: row.artist,
+      artworkUrl: row.artwork_url,
+      platforms
+    }
+  } catch (e) {
+    console.error("[DB] Error finding cached song:", e)
+    return null
+  }
 }
 
 export async function insertSmartLink(

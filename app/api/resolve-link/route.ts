@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
+import { findCachedSongBySpotifyUrl } from "@/lib/db"
 
 interface SongLinkResponse {
   entityUniqueId: string
@@ -47,6 +48,98 @@ const normalize = (str: string) => {
   return str.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+// Fallback: Extract metadata directly from Spotify's Open Graph tags
+async function handleSpotifyFallback(url: string) {
+  console.log("[resolve-link] Spotify fallback for:", url)
+  
+  // Only works for Spotify URLs
+  if (!url.includes("spotify.com")) {
+    return NextResponse.json({ 
+      error: "Rate limited. Please try again in a few minutes." 
+    }, { status: 429 })
+  }
+  
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Spotify page fetch failed: ${response.status}`)
+    }
+    
+    const html = await response.text()
+    
+    // Extract Open Graph metadata
+    const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/)
+    const imageMatch = html.match(/<meta property="og:image" content="([^"]+)"/)
+    const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/)
+    
+    let title = titleMatch?.[1] || ""
+    const artworkUrl = imageMatch?.[1] || ""
+    let artist = ""
+    
+    // Extract artist from description: "ArtistName · Song · Year"
+    if (descMatch?.[1]) {
+      const parts = descMatch[1].split(" · ")
+      if (parts.length > 0) {
+        artist = parts[0]
+      }
+    }
+    
+    // Determine type from URL
+    const type = url.includes("/album/") ? "album" : "song"
+    
+    // Build platforms list with just Spotify
+    const platforms: { platform: string; url: string }[] = [
+      { platform: "spotify", url: url.split("?")[0] }, // Clean URL
+      { platform: "meta_type", url: type }
+    ]
+    
+    // Add Last.fm link
+    if (artist && title) {
+      const safeArtist = encodeURIComponent(artist).replace(/%20/g, "+")
+      const safeTitle = encodeURIComponent(title).replace(/%20/g, "+")
+      platforms.push({
+        platform: "last.fm",
+        url: `https://www.last.fm/music/${safeArtist}/_/${safeTitle}`
+      })
+    }
+    
+    // Try to get preview from iTunes
+    const cleanQuery = `${normalize(title)} ${normalize(artist)}`
+    try {
+      const itunesResponse = await fetch(
+        `https://itunes.apple.com/search?term=${encodeURIComponent(cleanQuery)}&media=music&entity=song&limit=5`
+      )
+      const itunesData = await itunesResponse.json()
+      if (itunesData.resultCount > 0) {
+        const match = itunesData.results.find((r: any) => r.previewUrl)
+        if (match) {
+          platforms.push({ platform: "preview", url: match.previewUrl })
+        }
+      }
+    } catch (e) {}
+    
+    console.log("[resolve-link] Spotify fallback success:", { title, artist })
+    
+    return NextResponse.json({
+      title,
+      artist,
+      artworkUrl,
+      platforms,
+    })
+  } catch (error) {
+    console.error("[resolve-link] Spotify fallback error:", error)
+    return NextResponse.json({ 
+      error: "Rate limited by music service. Please try again in a few minutes.",
+      details: error instanceof Error ? error.message : "Unknown error"
+    }, { status: 429 })
+  }
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   let initUrl = searchParams.get("url")
@@ -57,6 +150,27 @@ export async function GET(request: NextRequest) {
 
   let url: string = initUrl
   console.log("[resolve-link] Processing URL:", initUrl)
+
+  // 0. Check if we already have this link cached in database (bypass rate limiting)
+  if (url.includes("spotify.com")) {
+    try {
+      const cached = await findCachedSongBySpotifyUrl(url)
+      if (cached) {
+        console.log("[resolve-link] Found cached song, skipping API call")
+        return NextResponse.json({
+          title: cached.title,
+          artist: cached.artist,
+          artworkUrl: cached.artworkUrl,
+          platforms: cached.platforms.map(p => ({
+            platform: p.platform,
+            url: p.url
+          }))
+        })
+      }
+    } catch (e) {
+      console.log("[resolve-link] Cache lookup failed, proceeding to API")
+    }
+  }
 
   try {
     // 1. Handle Last.fm Input
@@ -131,6 +245,12 @@ export async function GET(request: NextRequest) {
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unable to read response")
       console.error("[resolve-link] Odesli API error:", response.status, errorText)
+      
+      // Rate limited - try Spotify fallback
+      if (response.status === 429) {
+        console.log("[resolve-link] Rate limited, trying Spotify fallback...")
+        return await handleSpotifyFallback(url)
+      }
       
       if (response.status === 404) {
         return NextResponse.json({ 
