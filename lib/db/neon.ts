@@ -1,4 +1,4 @@
-import { Pool, PoolClient, QueryResult } from "pg"
+import { Pool, PoolClient, QueryResult, QueryResultRow } from "pg"
 
 let pool: Pool | null = null
 
@@ -40,10 +40,10 @@ export async function getNeonClient(): Promise<PoolClient> {
   return pool.connect()
 }
 
-export async function queryNeon<T = unknown>(text: string, values?: unknown[]): Promise<T[]> {
+export async function queryNeon<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<T[]> {
   const client = await getNeonClient()
   try {
-    const result: QueryResult<T> = await client.query(text, values)
+    const result = await client.query<T>(text, values)
     return result.rows
   } finally {
     client.release()

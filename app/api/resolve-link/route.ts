@@ -99,11 +99,34 @@ export async function GET(request: NextRequest) {
 
     // 2. Resolve via Odesli
     console.log("[resolve-link] Calling Odesli API for:", url)
-    const response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`, {
-      headers: {
-        "User-Agent": "MusicSmartLink/1.0"
+    
+    // Create AbortController for timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10s timeout
+    
+    let response
+    try {
+      response = await fetch(`https://api.song.link/v1-alpha.1/links?url=${encodeURIComponent(url)}`, {
+        headers: {
+          "User-Agent": "MusicSmartLink/1.0",
+          "Accept": "application/json"
+        },
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+    } catch (fetchError) {
+      clearTimeout(timeoutId)
+      console.error("[resolve-link] Fetch error:", fetchError)
+      
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        return NextResponse.json({ 
+          error: "Request timed out. The music service is taking too long to respond.",
+          details: "Timeout after 10s"
+        }, { status: 504 })
       }
-    })
+      
+      throw fetchError
+    }
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => "Unable to read response")
